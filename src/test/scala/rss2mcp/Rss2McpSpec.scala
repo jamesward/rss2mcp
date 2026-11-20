@@ -15,13 +15,24 @@ object Rss2McpSpec extends ZIOSpecDefault:
 
   private given zio.json.JsonCodec[ItemPublished] = JsonCodec.jsonCodec(summon[zio.schema.Schema[ItemPublished]])
 
-  private def install(initial: Map[FeedUrl, Chunk[FeedItem]]) =
+  // Webhooks to a receiver on localhost, over http: the production targets refuse both.
+  private val localWebhooks = Rss2Mcp.webhooks.copy(targets = McpWebhookTargets.unrestricted)
+
+  private def install(initial: Map[FeedUrl, Chunk[FeedItem]], extra: Routes[Any, Response] = Routes.empty) =
     for
       feeds  <- FakeFeeds.make(initial)
-      server <- ZIO.fromEither(Rss2Mcp.server(100.millis))
-      port   <- Server.install(Rss2Mcp.routes(server))
+      server <- Rss2Mcp.server(100.millis, localWebhooks)
+                  .provideSomeLayer[Scope](ZLayer.succeed[Feeds](feeds) ++ InMemoryWebhookStore.layer)
+      port   <- Server.install(Rss2Mcp.routes(server) ++ extra)
                   .provideSomeLayer[Server & Scope](ZLayer.succeed[Feeds](feeds) ++ McpServer.State.default)
-    yield (feeds, McpClientConfig(s"http://localhost:$port/"))
+    yield (feeds, port, McpClientConfig(s"http://localhost:$port/"))
+
+  /** A webhook endpoint that echoes verification challenges and keeps every POST body. */
+  private def receiver(bodies: Queue[Json.Obj]): Routes[Any, Response] =
+    Routes(Method.POST / "hook" -> handler: (request: Request) =>
+      request.body.asString.orDie.map(_.fromJson[Json.Obj].toOption.get).flatMap: body =>
+        bodies.offer(body).as:
+          body.get("challenge").fold(Response.ok)(c => Response.json(Json.Obj("challenge" -> c).toJson)))
 
   private def subscription(keywords: String*): Json.Obj =
     FeedSubscription(feedUrl, Option.when(keywords.nonEmpty)(Chunk.fromIterable(keywords).map(Keyword.parse(_).toOption.get)))
@@ -34,7 +45,7 @@ object Rss2McpSpec extends ZIOSpecDefault:
   private def receive(delivery: McpEventDelivery, keywords: String*) =
     ZIO.scoped:
       for
-        (feeds, config) <- install(Map(feedUrl -> Chunk(item("old", 1))))
+        (feeds, _, config) <- install(Map(feedUrl -> Chunk(item("old", 1))))
         client          <- McpEventsClient.connect(config)
         signals         <- client.subscribe(McpEventName(ItemEvents.Name), subscription(keywords*), delivery = Some(delivery))
                              .tap:
@@ -51,7 +62,7 @@ object Rss2McpSpec extends ZIOSpecDefault:
     test("events/list describes feed.item.published"):
       ZIO.scoped:
         for
-          (_, config) <- install(Map.empty)
+          (_, _, config) <- install(Map.empty)
           client      <- McpEventsClient.connect(config)
           events      <- client.listAll
         yield
@@ -67,10 +78,50 @@ object Rss2McpSpec extends ZIOSpecDefault:
     test("a poll subscription gets the new items"):
       receive(McpEventDelivery.Poll).map(items => assertTrue(items.map(_.itemId.value) == Chunk("kotlin")))
     ,
+    test("an anonymous webhook subscription, as ChatGPT makes one, is verified and gets new items"):
+      ZIO.scoped:
+        for
+          bodies              <- Queue.unbounded[Json.Obj]
+          (feeds, port, _)    <- install(Map(feedUrl -> Chunk(item("old", 1))), receiver(bodies))
+          secret               = "whsec_" + java.util.Base64.getEncoder.encodeToString(Array.fill(32)(7.toByte))
+          params               = Json.Obj(
+                                   "name" -> Json.Str(ItemEvents.Name),
+                                   "arguments" -> subscription("zio"),
+                                   "delivery" -> Json.Obj("mode" -> Json.Str("webhook"),
+                                     "url" -> Json.Str(s"http://localhost:$port/hook"), "secret" -> Json.Str(secret)),
+                                 )
+          meta                 = Json.Obj(
+                                   "io.modelcontextprotocol/protocolVersion" -> Json.Str("2026-07-28"),
+                                   "io.modelcontextprotocol/clientCapabilities" -> Json.Obj("extensions" -> Json.Obj()),
+                                 )
+          request              = Request.post(URL.decode(s"http://localhost:$port/").toOption.get,
+                                   Body.fromString(Json.Obj("jsonrpc" -> Json.Str("2.0"), "id" -> Json.Num(1),
+                                     "method" -> Json.Str("events/subscribe"),
+                                     "params" -> Json.Obj(params.fields :+ ("_meta" -> meta))).toJson))
+                                   .addHeader(Header.ContentType(MediaType.application.json))
+                                   .addHeader("accept", "application/json, text/event-stream")
+                                   .addHeader("user-agent", "openai-mcp/1.0")
+                                   .addHeader("mcp-protocol-version", "2026-07-28")
+                                   .addHeader("mcp-method", "events/subscribe")
+                                   .addHeader("mcp-name", ItemEvents.Name)
+          result              <- ZClient.batched(request).flatMap(_.body.asString).map(_.fromJson[Json.Obj].toOption.get)
+          verification        <- bodies.take
+          _                   <- feeds.publish(feedUrl, item("kotlin", 2, "Kotlin news")) *>
+                                   feeds.publish(feedUrl, item("zio", 3, "ZIO news"))
+          delivery            <- bodies.take.timeoutFail(RuntimeException("no delivery"))(10.seconds)
+        yield
+          val data = delivery.get("data").flatMap(_.asObject)
+          assertTrue(
+            result.get("result").flatMap(_.asObject).flatMap(_.get("id")).isDefined,
+            verification.get("type").contains(Json.Str("verification")),
+            delivery.get("eventId").contains(Json.Str("zio")),
+            data.flatMap(_.get("title")).contains(Json.Str("ZIO news")),
+          )
+    ,
     test("get_item answers an item's full text"):
       ZIO.scoped:
         for
-          (_, config) <- install(Map(feedUrl -> Chunk(item("a", 1, summary = Some("The whole story")))))
+          (_, _, config) <- install(Map(feedUrl -> Chunk(item("a", 1, summary = Some("The whole story")))))
           client      <- McpClient.connect(config)
           detail      <- client.callToolAs[GetItem, ItemDetail]("get_item", GetItem(feedUrl, ItemId("a")))
         yield assertTrue(detail.itemId == ItemId("a"), detail.summary.contains("The whole story"))
@@ -78,7 +129,7 @@ object Rss2McpSpec extends ZIOSpecDefault:
     test("get_item reports an item the feed no longer lists"):
       ZIO.scoped:
         for
-          (_, config) <- install(Map(feedUrl -> Chunk.empty))
+          (_, _, config) <- install(Map(feedUrl -> Chunk.empty))
           client      <- McpClient.connect(config)
           result      <- client.callTool[GetItem]("get_item", GetItem(feedUrl, ItemId("gone")))
         yield assertTrue(result.isError.contains(true))

@@ -13,19 +13,24 @@ object Main extends ZIOAppDefault:
 
   def run =
     for
-      port   <- System.envOrElse("PORT", "8080").map(_.toIntOption).someOrFail(IllegalArgumentException("PORT must be a number"))
-      server <- ZIO.fromEither(Rss2Mcp.server(PollInterval)).mapError(e => IllegalStateException(e.toString))
-      level  <- System.env("LOG_LEVEL").map(AppLogging.levelNamed)
-      _      <- ZIO.logAnnotate(
-                  LogAnnotation("port", port.toString),
-                  LogAnnotation("version", Rss2Mcp.Version),
-                  LogAnnotation("poll_interval_ms", PollInterval.toMillis.toString),
-                  LogAnnotation("log_level", level.label),
-                )(ZIO.logInfo("rss2mcp starting"))
-      _      <- Server.serve(Rss2Mcp.routes(server)).provide(
-                  Server.defaultWithPort(port),
-                  Feeds.client,
-                  Feeds.http(Feeds.Config(ttl = PollInterval), HostGuard.publicOnly),
-                  McpServer.State.default,
-                )
+      port  <- System.envOrElse("PORT", "8080").map(_.toIntOption).someOrFail(IllegalArgumentException("PORT must be a number"))
+      level <- System.env("LOG_LEVEL").map(AppLogging.levelNamed)
+      _     <- ZIO.logAnnotate(
+                 LogAnnotation("port", port.toString),
+                 LogAnnotation("version", Rss2Mcp.Version),
+                 LogAnnotation("poll_interval_ms", PollInterval.toMillis.toString),
+                 LogAnnotation("log_level", level.label),
+                 LogAnnotation("webhook_max_ttl_ms", Rss2Mcp.webhooks.maxTtl.toMillis.toString),
+                 LogAnnotation("webhook_anonymous", Rss2Mcp.webhooks.anonymous.toString),
+               )(ZIO.logInfo("rss2mcp starting"))
+      _     <- ZIO.scoped(
+                 Rss2Mcp.server(PollInterval).mapError(e => IllegalStateException(e.toString))
+                   .flatMap(server => Server.serve[Feeds & McpServer.State](Rss2Mcp.routes(server)))
+               ).provide(
+                 Server.defaultWithPort(port),
+                 Feeds.client,
+                 Feeds.http(Feeds.Config(ttl = PollInterval), HostGuard.publicOnly),
+                 McpServer.State.default,
+                 InMemoryWebhookStore.layer,
+               )
     yield ()

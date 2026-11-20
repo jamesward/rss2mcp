@@ -14,7 +14,7 @@ Subscription arguments (`inputSchema`):
 
 Each event's `data` (`payloadSchema`) holds the item's `feedUrl`, `itemId`, `title`, `link`, `published`, `author`, `categories` and a plain-text `summary` shortened to 2,000 characters, so a delivery stays far below the 256 KiB limit. The event id is the item's id: its RSS `guid` or Atom `id`, otherwise its link.
 
-Delivery is by poll (`events/poll`) and push (`events/stream`). The server reads a subscribed feed once a minute (`Main.PollInterval`), and subscriptions to the same feed share one fetch, so an event is at most about a minute behind the feed.
+Delivery is by poll (`events/poll`), push (`events/stream`) and webhook (`events/subscribe`). Webhook subscriptions are anonymous and last at most 15 minutes between refreshes. ChatGPT gets the draft dialect it implements (`capabilities.events`, the events methods on a 2025 session, `-32015` for a callback error, the event id as `webhook-id`), chosen by its `openai-mcp` client name; zio-http-mcp's README has the details. The server reads a subscribed feed once a minute (`Main.PollInterval`), and subscriptions to the same feed share one fetch, so an event is at most about a minute behind the feed.
 
 The cursor is the publish time, in epoch milliseconds, of the newest item a subscription has passed, matched or not. A client can persist it and resume from it after a restart. That has consequences:
 
@@ -34,7 +34,7 @@ The first check of a new subscription reads the feed, so a bad `feedUrl` is answ
 | An HTML page | `-32602`, naming the feeds the page links to (`<link rel="alternate">`), if any |
 | An unreachable host, a timeout or an HTTP 5xx, which may pass | `-32603` |
 
-Once subscribed (a request with a cursor), every failure to read the feed is `-32603`: a push subscription reports it on the stream and keeps checking.
+Once subscribed (a request with a cursor), every failure to read the feed is `-32603`: a push subscription reports it on the stream, and a webhook subscription logs it, and both keep checking. A webhook subscription whose callback endpoint doesn't echo the verification challenge is refused with `-32027` (`-32015` for ChatGPT).
 
 ## Tool: `get_item`
 
@@ -49,11 +49,11 @@ Once subscribed (a request with a cursor), every failure to read the feed is `-3
 
 ## Not implemented yet
 
-- **Webhook delivery**, the only mode ChatGPT supports. It waits on a zio-http-mcp release that has it.
+- **Durable webhook subscriptions.** They are kept in memory, so a restart loses them until each client's next refresh (at most 15 minutes) resubscribes it from its cursor. Run one instance: a second would deliver a refreshed subscription twice.
 - **Items without dates.** A feed whose items have no dates (RSS 0.91, and some RSS 2.0) can't be followed, because the cursor is a publish time.
 - **Claude Code channels** (`claude/channel`, `notifications/claude/channel`).
 - **WebSub**, which would replace polling for feeds that support it.
-- **Authorization.** Anyone who can reach the server can subscribe to any public feed.
+- **Authorization.** Anyone who can reach the server can subscribe to any public feed, by webhook too; anyone who knows a webhook subscription's callback URL, feed and keywords can unsubscribe it.
 
 ## Running
 

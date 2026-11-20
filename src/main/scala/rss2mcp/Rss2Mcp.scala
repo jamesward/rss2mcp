@@ -27,8 +27,18 @@ object Rss2Mcp:
                 ZIO.logInfo("get_item answered")),
             )
 
-  def server(pollInterval: Duration): Either[McpEventsError, McpServer[Feeds]] =
-    McpEvents(ItemEvents.handler(pollInterval)).map: events =>
+  /**
+   * How webhook subscriptions are granted. They're anonymous, because rss2mcp
+   * has no sign-in and its feeds are public. The store is in memory, so a
+   * subscription lives at most 15 minutes between refreshes: after a restart,
+   * a client's next refresh resubscribes it from its cursor, and the feed
+   * replays what it missed.
+   */
+  val webhooks: McpWebhookConfig = McpWebhookConfig(maxTtl = 15.minutes, defaultTtl = 15.minutes, anonymous = true)
+
+  def server(pollInterval: Duration, webhooks: McpWebhookConfig = webhooks)
+    : ZIO[Feeds & McpWebhookStore & Scope, McpEventsError, McpServer[Feeds]] =
+    McpEvents.withWebhooks(webhooks)(ItemEvents.handler(pollInterval)).map: events =>
       // The server only serves MCP, so it is the whole site: https://<host>/.
       McpServer("rss2mcp", Version)
         .mountedAt("/")
