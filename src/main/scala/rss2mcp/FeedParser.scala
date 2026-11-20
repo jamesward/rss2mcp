@@ -6,6 +6,7 @@ import org.jsoup.Jsoup
 import zio.*
 
 import java.io.ByteArrayInputStream
+import java.nio.charset.StandardCharsets.UTF_8
 import scala.jdk.CollectionConverters.*
 import scala.util.Using
 
@@ -17,13 +18,37 @@ object FeedParser:
    * it is left out.
    */
   def parse(url: FeedUrl, bytes: Chunk[Byte]): Either[FeedError, Chunk[FeedItem]] =
+    html(url, bytes).fold(xml(url, bytes))(Left(_))
+
+  private def xml(url: FeedUrl, bytes: Chunk[Byte]): Either[FeedError, Chunk[FeedItem]] =
     Using(XmlReader(ByteArrayInputStream(bytes.toArray))): reader =>
-      // Rome refuses DOCTYPE declarations by default, which rules out XXE.
-      val feed = SyndFeedInput().build(reader).nn
-      Chunk.fromIterable(feed.getEntries.nn.asScala).flatMap(item)
+      // A DOCTYPE is allowed because RSS 0.91 feeds declare one. Rome still
+      // turns off external entities and external DTDs, resolves every entity
+      // to nothing and doesn't expand entities, so an XXE reads nothing.
+      val input = SyndFeedInput()
+      input.setAllowDoctypes(true)
+      Chunk.fromIterable(input.build(reader).nn.getEntries.nn.asScala).flatMap(item)
     .toEither
     .left.map(e => FeedError.Unparseable(url, Option(e.getMessage).getOrElse(e.getClass.getSimpleName)))
     .map(_.sortBy(_.published).reverse)
+
+  /**
+   * An HTML page rather than a feed, as people often give a site's address:
+   * the error names the feeds the page links to, if it does.
+   */
+  private def html(url: FeedUrl, bytes: Chunk[Byte]): Option[FeedError] =
+    val head = String(bytes.take(4096).toArray, UTF_8).toLowerCase.nn
+    val looksHtml = (head.contains("<html") || head.contains("<!doctype html")) &&
+      !Chunk("<rss", "<feed", "<rdf:rdf").exists(head.contains)
+    Option.when(looksHtml):
+      val page = Jsoup.parse(String(bytes.toArray, UTF_8), url.value).nn
+      val feeds = Chunk.fromIterable(page.select("link[rel~=(?i)alternate][type~=(?i)application/(rss|atom)\\+xml]").nn.asScala)
+        .flatMap(link => nonBlank(link.absUrl("href")))
+        .distinct
+      val hint =
+        if feeds.isEmpty then "it doesn't link to one"
+        else s"it links to ${feeds.mkString(", ")}"
+      FeedError.Unparseable(url, s"it's an HTML page, not a feed; $hint")
 
   private def item(entry: SyndEntry): Option[FeedItem] =
     val link = nonBlank(entry.getLink)
