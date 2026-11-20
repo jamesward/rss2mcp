@@ -39,11 +39,8 @@ The MCP server is `sbta` (this build's `./sbta --mcp`), configured in `.kiro/set
 - To work on zio-http-mcp together with this project, check it out at `../zio-http-mcp` and run
   `./sbta -Dlocal ...`, which builds against that checkout instead of the published artifact.
 
-## Webhooks (branch `webhooks`)
+## Webhooks
 
-- This branch needs zio-http-mcp's unreleased webhook delivery (its `events-webhooks` branch): build it with
-  `./sbta -Dlocal ...` against `../zio-http-mcp` until a release has it, then pin that release. Without
-  `-Dlocal` it doesn't compile, so CI fails on this branch until then.
 - Webhook subscriptions are anonymous (`McpWebhookConfig(anonymous = true)`): rss2mcp has no sign-in, and its
   feeds are public. ChatGPT gets its draft dialect by default (zio-http-mcp `McpEventsDialect.auto`).
 - `InMemoryWebhookStore` keeps subscriptions in a `Ref`, so a restart (Heroku cycles dynos daily) loses them.
