@@ -25,11 +25,23 @@ object ItemEvents:
   def check(request: McpEventRequest[FeedSubscription]): ZIO[Feeds, McpEventError, McpEventBatch[ItemPublished]] =
     val subscription = request.arguments
     for
-      items <- ZIO.serviceWithZIO[Feeds](_.items(subscription.feedUrl)).mapError:
-                 case blocked: FeedError.Blocked => McpEventError.Forbidden(blocked.message)
-                 case other                      => McpEventError.Upstream(other.message)
+      items <- ZIO.serviceWithZIO[Feeds](_.items(subscription.feedUrl)).mapError(error(request.cursor.isEmpty))
       now   <- Clock.instant
     yield since(subscription, items, request.cursor, request.maxAge, request.maxEvents, now)
+
+  /**
+   * A feed that can't be read. Without a cursor the subscription is new, so a
+   * feed that answers but isn't one (a 4xx, not RSS or Atom, too large, a
+   * redirect loop) is a bad argument. With a cursor it was a feed, so any
+   * failure is an upstream one: a push or webhook subscription reports it and
+   * keeps checking. An unreachable host or a 5xx can pass, so it is upstream either way.
+   */
+  def error(fresh: Boolean)(error: FeedError): McpEventError = error match
+    case FeedError.Blocked(_, _)                                    => McpEventError.Forbidden(error.message)
+    case FeedError.HttpStatus(_, status) if fresh && status < 500   => McpEventError.InvalidParams(error.message)
+    case FeedError.Unparseable(_, _) | FeedError.TooLarge(_, _) | FeedError.TooManyRedirects(_) if fresh =>
+      McpEventError.InvalidParams(error.message)
+    case _                                                          => McpEventError.Upstream(error.message)
 
   def since(
     subscription: FeedSubscription,

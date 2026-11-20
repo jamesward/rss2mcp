@@ -59,6 +59,27 @@ object ItemEventsSpec extends ZIOSpecDefault:
       val batch = since(from = Some(McpEventCursor("not-a-cursor")))
       assertTrue(batch.events.isEmpty, batch.truncated, batch.cursor == cursor(3))
     ,
+    test("a new subscription to something that isn't a feed is InvalidParams; once subscribed it's Upstream"):
+      for
+        feeds   <- FakeFeeds.make(Map.empty)
+        request  = (from: Option[McpEventCursor]) =>
+                     McpEventRequest(everything, from, None, 100, McpRequestContext(ProtocolVersion.V2026_07_28))
+        fresh   <- ItemEvents.check(request(None)).provideEnvironment(ZEnvironment[Feeds](feeds)).flip
+        later   <- ItemEvents.check(request(cursor(1))).provideEnvironment(ZEnvironment[Feeds](feeds)).flip
+      yield assertTrue(
+        fresh == McpEventError.InvalidParams(s"${feedUrl.value} answered HTTP 404"),
+        later == McpEventError.Upstream(s"${feedUrl.value} answered HTTP 404"),
+      )
+    ,
+    test("blocked hosts are Forbidden, and unreachable ones and 5xx are Upstream even for a new subscription"):
+      val fresh = ItemEvents.error(fresh = true)
+      assertTrue(
+        fresh(FeedError.Blocked(feedUrl, "private")) == McpEventError.Forbidden(s"Can't read ${feedUrl.value}: private"),
+        fresh(FeedError.HttpStatus(feedUrl, 503)) == McpEventError.Upstream(s"${feedUrl.value} answered HTTP 503"),
+        fresh(FeedError.Unreachable(feedUrl, "timeout")) == McpEventError.Upstream(s"Can't reach ${feedUrl.value}: timeout"),
+        fresh(FeedError.Unparseable(feedUrl, "html")) == McpEventError.InvalidParams(s"${feedUrl.value} isn't an RSS or Atom feed: html"),
+      )
+    ,
     test("an event's summary is shortened, so a delivery stays small"):
       val long = item("x", 1, summary = Some("a" * 10_000))
       assertTrue(ItemPublished(feedUrl, long).summary.exists(_.length == ItemPublished.MaxSummary))

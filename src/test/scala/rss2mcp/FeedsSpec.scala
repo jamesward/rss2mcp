@@ -18,10 +18,11 @@ object FeedsSpec extends ZIOSpecDefault:
 
   private def url(port: Int, path: String): FeedUrl = FeedUrl.parse(s"http://localhost:$port/$path").toOption.get
 
-  private def withFeeds[E, A](config: Feeds.Config, guard: HostGuard)(f: (Int, Feeds) => ZIO[Any, E, A]) =
+  private def withFeeds[E, A](config: Feeds.Config, guard: HostGuard, extra: Routes[Any, Response] = Routes.empty)(
+    f: (Int, Feeds) => ZIO[Any, E, A]) =
     ZIO.scoped:
       for
-        port  <- Server.install(routes)
+        port  <- Server.install(routes ++ extra)
         feeds <- (Client.default >>> Feeds.http(config, guard)).build.map(_.get)
         a     <- f(port, feeds)
       yield a
@@ -35,6 +36,17 @@ object FeedsSpec extends ZIOSpecDefault:
     test("fetches and parses a feed"):
       withFeeds(Feeds.Config(), HostGuard.allowAll): (port, feeds) =>
         feeds.items(url(port, "feed.xml")).map(items => assertTrue(items.size == 2))
+    ,
+    test("subscriptions to the same feed share one fetch while it's cached"):
+      for
+        fetches <- Ref.make(0)
+        counted  = Routes(Method.GET / "counted.xml" -> handler(
+                     fetches.update(_ + 1).as(Response.text(Fixtures.rss)).delay(200.millis)))
+        sizes   <- withFeeds(Feeds.Config(), HostGuard.allowAll, counted): (port, feeds) =>
+                     ZIO.foreachPar(1 to 10)(_ => feeds.items(url(port, "counted.xml"))).map(_.map(_.size)) <*>
+                       feeds.items(url(port, "counted.xml")).map(_.size)
+        count   <- fetches.get
+      yield assertTrue(sizes._1.forall(_ == 2), sizes._2 == 2, count == 1)
     ,
     test("follows a redirect"):
       withFeeds(Feeds.Config(), HostGuard.allowAll): (port, feeds) =>
