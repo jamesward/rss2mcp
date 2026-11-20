@@ -43,7 +43,7 @@ The cursor is the publish time, in epoch milliseconds, of the newest item a subs
 ## Running
 
 ```bash
-./sbta run                 # serves http://localhost:8080/mcp (set PORT to change it)
+./sbta run                 # serves http://localhost:8080/ (set PORT to change it)
 ./sbta "~runReload"        # restarts on source changes
 ```
 

@@ -29,7 +29,9 @@ object Rss2Mcp:
 
   def server(pollInterval: Duration): Either[McpEventsError, McpServer[Feeds]] =
     McpEvents(ItemEvents.handler(pollInterval)).map: events =>
+      // The server only serves MCP, so it is the whole site: https://<host>/.
       McpServer("rss2mcp", Version)
+        .mountedAt("/")
         .tool(getItem)
         .withExtensions(events)
 

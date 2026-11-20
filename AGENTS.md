@@ -30,8 +30,8 @@ The MCP server is `sbta` (this build's `./sbta --mcp`), configured in `.kiro/set
   lookups are the proxied javadocs.dev tools of the same server.
 - Full validation: `./sbta "Test / compile; testFull; stage"`. For the startup smoke test, run
   `PORT=18080 target/out/jvm/scala-3.10.1/rss2mcp/universal/stage/bin/rss2mcp` and POST an
-  `initialize` to `http://localhost:18080/mcp`.
-- Dev: `./sbta run` serves `http://localhost:8080/mcp` (`PORT` overrides it); `./sbta "~runReload"` restarts on changes.
+  `initialize` to `http://localhost:18080/`.
+- Dev: `./sbta run` serves `http://localhost:8080/` (`PORT` overrides it); `./sbta "~runReload"` restarts on changes.
   The server has no service dependencies, so there is no `AppTest`.
 - Tests need no Docker and no network: `FeedsSpec` serves feeds from an in-process zio-http server
   (with `HostGuard.allowAll`, since the production guard refuses localhost), and `Rss2McpSpec` runs the

@@ -21,7 +21,7 @@ object Rss2McpSpec extends ZIOSpecDefault:
       server <- ZIO.fromEither(Rss2Mcp.server(100.millis))
       port   <- Server.install(Rss2Mcp.routes(server))
                   .provideSomeLayer[Server & Scope](ZLayer.succeed[Feeds](feeds) ++ McpServer.State.default)
-    yield (feeds, McpClientConfig(s"http://localhost:$port/mcp"))
+    yield (feeds, McpClientConfig(s"http://localhost:$port/"))
 
   private def subscription(keywords: String*): Json.Obj =
     FeedSubscription(feedUrl, Option.when(keywords.nonEmpty)(Chunk.fromIterable(keywords).map(Keyword.parse(_).toOption.get)))
