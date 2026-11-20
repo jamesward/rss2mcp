@@ -48,6 +48,19 @@ object FeedsSpec extends ZIOSpecDefault:
         count   <- fetches.get
       yield assertTrue(sizes._1.forall(_ == 2), sizes._2 == 2, count == 1)
     ,
+    test("a feed served with a certificate the JDK doesn't trust isn't read"):
+      ZIO.scoped:
+        for
+          ssl    <- ZIO.succeed(SSLConfig.fromJavaxNetSslKeyStoreResource("self-signed.p12", zio.Config.Secret("changeit")))
+          tls    <- Server.defaultWith(_.onAnyOpenPort.ssl(ssl)).build
+          port   <- Server.install(routes).provideEnvironment(tls)
+          feeds  <- (Feeds.client >>> Feeds.http(Feeds.Config(), HostGuard.allowAll)).build.map(_.get)
+          target  = FeedUrl.parse(s"https://localhost:$port/feed.xml").toOption.get
+          error  <- feeds.items(target).flip
+        yield assertTrue(error match
+          case FeedError.Unreachable(url, _) => url == target
+          case _                             => false)
+    ,
     test("follows a redirect"):
       withFeeds(Feeds.Config(), HostGuard.allowAll): (port, feeds) =>
         feeds.items(url(port, "moved")).map(items => assertTrue(items.size == 2))

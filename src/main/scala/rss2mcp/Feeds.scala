@@ -3,6 +3,7 @@ package rss2mcp
 import zio.*
 import zio.cache.{Cache, Lookup}
 import zio.http.*
+import zio.http.netty.NettyConfig
 
 import java.net.{Inet6Address, InetAddress}
 
@@ -11,10 +12,20 @@ trait Feeds:
   def items(url: FeedUrl): IO[FeedError, Chunk[FeedItem]]
 
 object Feeds:
+  /**
+   * An HTTP client that checks a feed's TLS certificate and host name against
+   * the JDK's trust store. zio-http's `Client.default` accepts any certificate,
+   * which would let anyone on the network path rewrite a feed.
+   */
+  val client: ZLayer[Any, Throwable, Client] =
+    (ZLayer.succeed(ZClient.Config.default.ssl(ClientSSLConfig.FromSystemTrustStore)) ++
+      ZLayer.succeed(NettyConfig.defaultWithFastShutdown) ++ DnsResolver.default) >>> Client.live
+
   final case class Config(
     maxBytes: Long = 5L * 1024 * 1024,
     maxRedirects: Int = 5,
-    timeout: Duration = 15.seconds,
+    // Some busy feeds (hnrss.org) take several seconds to answer.
+    timeout: Duration = 30.seconds,
     /** How long a fetched feed is reused, so subscriptions to one feed share a fetch. */
     ttl: Duration = 1.minute,
     capacity: Int = 10_000,

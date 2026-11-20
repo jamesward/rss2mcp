@@ -24,7 +24,7 @@ object Main extends ZIOAppDefault:
                 )(ZIO.logInfo("rss2mcp starting"))
       _      <- Server.serve(Rss2Mcp.routes(server)).provide(
                   Server.defaultWithPort(port),
-                  Client.default,
+                  Feeds.client,
                   Feeds.http(Feeds.Config(ttl = PollInterval), HostGuard.publicOnly),
                   McpServer.State.default,
                 )

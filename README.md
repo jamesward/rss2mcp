@@ -45,7 +45,7 @@ Once subscribed (a request with a cursor), every failure to read the feed is `-3
 - Feed text comes from whoever publishes the feed. It reaches the agent as data, and the event and tool descriptions say to treat it as data, but that doesn't stop a prompt injection. Agents should act on it with that in mind.
 - HTML in feed text is reduced to plain text (jsoup). A `DOCTYPE` is allowed, as RSS 0.91 feeds declare one, but Rome turns off external entities and external DTDs and expands no entity, so an XML external entity reads nothing.
 - The server only fetches `http` and `https` URLs without credentials. It refuses hosts that resolve to loopback, private, link-local (including cloud metadata endpoints), CGNAT or multicast addresses, and checks again on every redirect (at most 5). A DNS answer that changes between the check and the connection isn't caught.
-- A feed body is limited to 5 MiB and a fetch to 15 seconds.
+- A feed body is limited to 5 MiB and a fetch to 30 seconds. A feed's TLS certificate and host name are checked against the JDK's trust store (zio-http's default client accepts any certificate).
 
 ## Not implemented yet
 
