@@ -114,7 +114,8 @@ object Rss2McpSpec extends ZIOSpecDefault:
           assertTrue(
             result.get("result").flatMap(_.asObject).flatMap(_.get("id")).isDefined,
             verification.get("type").contains(Json.Str("verification")),
-            delivery.get("eventId").contains(Json.Str("zio")),
+            delivery.get("eventId").contains(Json.Str(ItemId("zio").eventId)),
+            delivery.get("data").flatMap(_.asObject).flatMap(_.get("itemId")).contains(Json.Str("zio")),
             data.flatMap(_.get("title")).contains(Json.Str("ZIO news")),
           )
     ,

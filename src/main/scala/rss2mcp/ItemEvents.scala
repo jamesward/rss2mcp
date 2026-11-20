@@ -88,7 +88,7 @@ object ItemEvents:
         McpEventBatch(
           sent.map(item => McpEventEmit(
             ItemPublished(subscription.feedUrl, item),
-            eventId = Some(item.id.value),
+            eventId = Some(item.id.eventId),
             timestamp = Some(item.published),
             cursor = Some(cursorAt(item.published)),
           )),

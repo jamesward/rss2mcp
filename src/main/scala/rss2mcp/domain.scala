@@ -36,7 +36,16 @@ opaque type ItemId = String
 
 object ItemId:
   def apply(value: String): ItemId = value
-  extension (id: ItemId) def value: String = id
+  extension (id: ItemId)
+    def value: String = id
+    /**
+     * The id of the item's events: `item_` and 32 hex characters of the
+     * SHA-256 of the item id. Item ids are often URLs, which can't be a
+     * `webhook-id` header, and ChatGPT wants the `webhook-id` to be the event id.
+     */
+    def eventId: String =
+      val digest = java.security.MessageDigest.getInstance("SHA-256").nn.digest(id.getBytes(java.nio.charset.StandardCharsets.UTF_8)).nn
+      "item_" + java.util.HexFormat.of.nn.formatHex(digest.take(16)).nn
   given Schema[ItemId] = Schema[String].transform(apply, _.value)
   given CanEqual[ItemId, ItemId] = CanEqual.derived
 

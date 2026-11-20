@@ -12,7 +12,7 @@ Subscription arguments (`inputSchema`):
 | `feedUrl` | string | The feed's `http` or `https` URL |
 | `keywords` | string[], optional | Deliver only items whose title, summary, content or categories contain one of these, ignoring case |
 
-Each event's `data` (`payloadSchema`) holds the item's `feedUrl`, `itemId`, `title`, `link`, `published`, `author`, `categories` and a plain-text `summary` shortened to 2,000 characters, so a delivery stays far below the 256 KiB limit. The event id is the item's id: its RSS `guid` or Atom `id`, otherwise its link.
+Each event's `data` (`payloadSchema`) holds the item's `feedUrl`, `itemId`, `title`, `link`, `published`, `author`, `categories` and a plain-text `summary` shortened to 2,000 characters, so a delivery stays far below the 256 KiB limit. The item's id (`itemId`) is its RSS `guid` or Atom `id`, otherwise its link. The event id is derived from it, `item_` and 32 hex characters of its SHA-256, so it's stable and can be the `webhook-id` header, which ChatGPT wants equal to the event id.
 
 Delivery is by poll (`events/poll`), push (`events/stream`) and webhook (`events/subscribe`). Webhook subscriptions are anonymous and last at most 15 minutes between refreshes. ChatGPT gets the draft dialect it implements (`capabilities.events`, the events methods on a 2025 session, `-32015` for a callback error, the event id as `webhook-id`), chosen by its `openai-mcp` client name; zio-http-mcp's README has the details. The server reads a subscribed feed once a minute (`Main.PollInterval`), and subscriptions to the same feed share one fetch, so an event is at most about a minute behind the feed.
 

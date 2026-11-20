@@ -9,6 +9,7 @@ import Fixtures.*
 object ItemEventsSpec extends ZIOSpecDefault:
   private val everything = FeedSubscription(feedUrl, None)
   private val items      = Chunk(item("c", 3, "ZIO 3"), item("b", 2, "Kotlin"), item("a", 1, "MCP news"))
+  private def ids(items: String*) = items.map(id => Some(ItemId(id).eventId))
   private def cursor(minute: Int) = Some(McpEventCursor(at(minute).toEpochMilli.toString))
 
   private def since(
@@ -31,7 +32,7 @@ object ItemEventsSpec extends ZIOSpecDefault:
     test("answers the items after the cursor, oldest first, each with its own position"):
       val batch = since(from = cursor(1))
       assertTrue(
-        batch.events.map(_.eventId) == Chunk(Some("b"), Some("c")),
+        batch.events.map(_.eventId) == Chunk(ids("b", "c")*),
         batch.events.map(_.cursor) == Chunk(cursor(2), cursor(3)),
         batch.cursor == cursor(3),
         !batch.hasMore,
@@ -45,15 +46,15 @@ object ItemEventsSpec extends ZIOSpecDefault:
     test("keywords filter items, but the cursor moves past the ones left out"):
       val zio   = FeedSubscription(feedUrl, Some(Chunk(Keyword.parse("zio").toOption.get, Keyword.parse("mcp").toOption.get)))
       val batch = since(subscription = zio, from = cursor(0))
-      assertTrue(batch.events.map(_.eventId) == Chunk(Some("a"), Some("c")), batch.cursor == cursor(3))
+      assertTrue(batch.events.map(_.eventId) == Chunk(ids("a", "c")*), batch.cursor == cursor(3))
     ,
     test("maxEvents leaves the rest for the next check"):
       val batch = since(from = cursor(0), maxEvents = 2)
-      assertTrue(batch.events.map(_.eventId) == Chunk(Some("a"), Some("b")), batch.hasMore, batch.cursor == cursor(2))
+      assertTrue(batch.events.map(_.eventId) == Chunk(ids("a", "b")*), batch.hasMore, batch.cursor == cursor(2))
     ,
     test("maxAge skips older items and says so"):
       val batch = since(from = cursor(0), maxAge = Some(8.minutes))
-      assertTrue(batch.events.map(_.eventId) == Chunk(Some("b"), Some("c")), batch.truncated, batch.cursor == cursor(3))
+      assertTrue(batch.events.map(_.eventId) == Chunk(ids("b", "c")*), batch.truncated, batch.cursor == cursor(3))
     ,
     test("a cursor this server didn't write restarts from now and says so"):
       val batch = since(from = Some(McpEventCursor("not-a-cursor")))
@@ -80,6 +81,14 @@ object ItemEventsSpec extends ZIOSpecDefault:
         fresh(FeedError.Unparseable(feedUrl, "html")) == McpEventError.InvalidParams(s"${feedUrl.value} isn't an RSS or Atom feed: html"),
         fresh(FeedError.Undated(feedUrl, 3)) == McpEventError.InvalidParams(FeedError.Undated(feedUrl, 3).message),
         ItemEvents.error(fresh = false)(FeedError.Undated(feedUrl, 3)) == McpEventError.Upstream(FeedError.Undated(feedUrl, 3).message),
+      )
+    ,
+    test("an event id is header-safe and stable, whatever the item id"):
+      val id = ItemId("https://news.ycombinator.com/item?id=50583820")
+      assertTrue(
+        id.eventId.matches("item_[0-9a-f]{32}"),
+        id.eventId == ItemId("https://news.ycombinator.com/item?id=50583820").eventId,
+        id.eventId != ItemId("https://news.ycombinator.com/item?id=50583821").eventId,
       )
     ,
     test("an event's summary is shortened, so a delivery stays small"):
