@@ -83,6 +83,14 @@ object Rss2McpSpec extends ZIOSpecDefault:
           result      <- client.callTool[GetItem]("get_item", GetItem(feedUrl, ItemId("gone")))
         yield assertTrue(result.isError.contains(true))
     ,
+    test("LOG_LEVEL names the log floor, INFO when it names none"):
+      assertTrue(
+        AppLogging.levelNamed(Some("debug")).label == zio.LogLevel.Debug.label,
+        AppLogging.levelNamed(Some(" WARN ")).label == zio.LogLevel.Warning.label,
+        AppLogging.levelNamed(Some("chatty")).label == zio.LogLevel.Info.label,
+        AppLogging.levelNamed(None).label == zio.LogLevel.Info.label,
+      )
+    ,
     test("log entries made while handling a request carry its X-Request-ID"):
       val routes = Routes(Method.GET / "hello" -> handler(ZIO.logInfo("handling").as(Response.ok))) @@ Rss2Mcp.requestId
       for

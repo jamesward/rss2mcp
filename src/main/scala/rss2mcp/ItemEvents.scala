@@ -24,22 +24,42 @@ object ItemEvents:
 
   def check(request: McpEventRequest[FeedSubscription]): ZIO[Feeds, McpEventError, McpEventBatch[ItemPublished]] =
     val subscription = request.arguments
-    for
-      items <- ZIO.serviceWithZIO[Feeds](_.items(subscription.feedUrl)).mapError(error(request.cursor.isEmpty))
-      now   <- Clock.instant
-    yield since(subscription, items, request.cursor, request.maxAge, request.maxEvents, now)
+    ZIO.logAnnotate(
+      LogAnnotation("feed", subscription.feedUrl.value),
+      LogAnnotation("keywords", subscription.keywords.fold("-")(_.map(_.value).mkString(","))),
+      LogAnnotation("cursor_in", request.cursor.fold("null")(_.value)),
+      LogAnnotation("protocol", request.context.protocolVersion.wire),
+    ):
+      for
+        items <- ZIO.serviceWithZIO[Feeds](_.items(subscription.feedUrl)).mapError(error(request.cursor.isEmpty))
+                   .tapError(e => ZIO.logWarning(s"Feed check failed: ${e.detail.message}"))
+        now   <- Clock.instant
+        batch  = since(subscription, items, request.cursor, request.maxAge, request.maxEvents, now)
+        _     <- ZIO.logAnnotate(
+                   LogAnnotation("cursor_out", batch.cursor.fold("null")(_.value)),
+                   LogAnnotation("items", items.size.toString),
+                   LogAnnotation("events", batch.events.size.toString),
+                   LogAnnotation("event_ids", batch.events.flatMap(_.eventId).mkString(" ")),
+                   LogAnnotation("truncated", batch.truncated.toString),
+                   LogAnnotation("has_more", batch.hasMore.toString),
+                 ):
+                   if batch.events.nonEmpty then ZIO.logInfo("Feed check found new items")
+                   else if request.cursor.isEmpty then ZIO.logInfo("Feed subscription starts from now")
+                   else ZIO.logDebug("Feed check found nothing new")
+      yield batch
 
   /**
    * A feed that can't be read. Without a cursor the subscription is new, so a
    * feed that answers but isn't one (a 4xx, not RSS or Atom, too large, a
-   * redirect loop) is a bad argument. With a cursor it was a feed, so any
+   * redirect loop, no dated items) is a bad argument. With a cursor it was a feed, so any
    * failure is an upstream one: a push or webhook subscription reports it and
    * keeps checking. An unreachable host or a 5xx can pass, so it is upstream either way.
    */
   def error(fresh: Boolean)(error: FeedError): McpEventError = error match
     case FeedError.Blocked(_, _)                                    => McpEventError.Forbidden(error.message)
     case FeedError.HttpStatus(_, status) if fresh && status < 500   => McpEventError.InvalidParams(error.message)
-    case FeedError.Unparseable(_, _) | FeedError.TooLarge(_, _) | FeedError.TooManyRedirects(_) if fresh =>
+    case FeedError.Unparseable(_, _) | FeedError.TooLarge(_, _) | FeedError.TooManyRedirects(_) |
+        FeedError.Undated(_, _) if fresh =>
       McpEventError.InvalidParams(error.message)
     case _                                                          => McpEventError.Upstream(error.message)
 

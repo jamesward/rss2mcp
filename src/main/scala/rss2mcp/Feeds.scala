@@ -33,8 +33,23 @@ object Feeds:
         def items(url: FeedUrl): IO[FeedError, Chunk[FeedItem]] = cache.get(url)
 
   private final case class HttpFetch(client: Client, config: Config, guard: HostGuard):
+    /** A cache miss: fetch and parse the feed, and log how it went. */
     def items(url: FeedUrl): IO[FeedError, Chunk[FeedItem]] =
-      fetch(url, config.maxRedirects).flatMap(bytes => ZIO.fromEither(FeedParser.parse(url, bytes)))
+      ZIO.logAnnotate(LogAnnotation("feed", url.value)):
+        for
+          started <- Clock.nanoTime
+          bytes   <- fetch(url, config.maxRedirects)
+          items   <- ZIO.fromEither(FeedParser.parse(url, bytes))
+          ended   <- Clock.nanoTime
+          _       <- ZIO.logAnnotate(
+                       LogAnnotation("bytes", bytes.size.toString),
+                       LogAnnotation("items", items.size.toString),
+                       LogAnnotation("newest", items.headOption.fold("-")(_.published.toString)),
+                       LogAnnotation("duration_ms", ((ended - started) / 1000000).toString),
+                     )(ZIO.logInfo("Feed fetched"))
+        yield items
+      .tapError(e => ZIO.logAnnotate(LogAnnotation("feed", url.value), LogAnnotation("error", e.message))(
+        ZIO.logWarning("Feed fetch failed")))
 
     private def fetch(url: FeedUrl, redirectsLeft: Int): IO[FeedError, Chunk[Byte]] =
       for
@@ -49,7 +64,13 @@ object Feeds:
       yield bytes
 
     private def read(url: FeedUrl, response: Response, redirectsLeft: Int): ZIO[Scope, FeedError, Chunk[Byte]] =
-      response.status match
+      ZIO.logAnnotate(
+        LogAnnotation("hop", url.value),
+        LogAnnotation("status", response.status.code.toString),
+        LogAnnotation("content_type", response.rawHeader("content-type").getOrElse("-")),
+        LogAnnotation("location", response.rawHeader("location").getOrElse("-")),
+      )(ZIO.logDebug("Feed answered")) *>
+      (response.status match
         case status if status.isRedirection =>
           if redirectsLeft <= 0 then ZIO.fail(FeedError.TooManyRedirects(url))
           else
@@ -62,7 +83,7 @@ object Feeds:
           response.body.asStream.take(config.maxBytes + 1).runCollect
             .mapError(e => FeedError.Unreachable(url, e.getMessage))
             .filterOrFail(_.size <= config.maxBytes)(FeedError.TooLarge(url, config.maxBytes))
-        case status => ZIO.fail(FeedError.HttpStatus(url, status.code))
+        case status => ZIO.fail(FeedError.HttpStatus(url, status.code)))
     .catchAllDefect(e => ZIO.fail(FeedError.Unreachable(url, e.getMessage)))
 
 /** Decides whether the server may connect to a feed's host. */

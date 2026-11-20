@@ -43,7 +43,12 @@ The MCP server is `sbta` (this build's `./sbta --mcp`), configured in `.kiro/set
 
 - Not deployed yet: there is no Heroku app.
 - Logs are one JSON object per line on stdout (`zio-logging` console JSON logger with the SLF4J bridge,
-  `AppLogging.json`), with `request_id` from `X-Request-ID` on every entry made during a request.
+  `AppLogging`), with `request_id` from `X-Request-ID` on every entry made during a request. `LOG_LEVEL`
+  sets the floor (`INFO` when unset; Java libraries stay at `INFO` or above). At `INFO` the logs show each
+  request's MCP headers (`Request received`), each feed fetch, feed checks that find items, `get_item`, and,
+  from zio-http-mcp, every events method and webhook POST. `DEBUG` adds every feed check, each HTTP hop of a
+  fetch, and webhook watermarks. Request bodies, tokens and webhook secrets are never logged; a session id is
+  logged as its first 8 characters.
 - Runtime metrics (`log-runtime-metrics`) are not on, because there is no app yet.
 
 ## Maintenance routine

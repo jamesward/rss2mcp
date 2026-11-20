@@ -78,6 +78,8 @@ object ItemEventsSpec extends ZIOSpecDefault:
         fresh(FeedError.HttpStatus(feedUrl, 503)) == McpEventError.Upstream(s"${feedUrl.value} answered HTTP 503"),
         fresh(FeedError.Unreachable(feedUrl, "timeout")) == McpEventError.Upstream(s"Can't reach ${feedUrl.value}: timeout"),
         fresh(FeedError.Unparseable(feedUrl, "html")) == McpEventError.InvalidParams(s"${feedUrl.value} isn't an RSS or Atom feed: html"),
+        fresh(FeedError.Undated(feedUrl, 3)) == McpEventError.InvalidParams(FeedError.Undated(feedUrl, 3).message),
+        ItemEvents.error(fresh = false)(FeedError.Undated(feedUrl, 3)) == McpEventError.Upstream(FeedError.Undated(feedUrl, 3).message),
       )
     ,
     test("an event's summary is shortened, so a delivery stays small"):

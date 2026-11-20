@@ -140,6 +140,8 @@ enum FeedError:
   case TooLarge(url: FeedUrl, maxBytes: Long)
   case TooManyRedirects(url: FeedUrl)
   case Unparseable(url: FeedUrl, reason: String)
+  /** The feed has items, but none has a date, so a new one can't be told from an old one. */
+  case Undated(url: FeedUrl, items: Int)
 
   def message: String = this match
     case Blocked(url, reason)     => s"Can't read ${url.value}: $reason"
@@ -148,6 +150,8 @@ enum FeedError:
     case TooLarge(url, maxBytes)  => s"${url.value} is larger than $maxBytes bytes"
     case TooManyRedirects(url)    => s"${url.value} redirected too many times"
     case Unparseable(url, reason) => s"${url.value} isn't an RSS or Atom feed: $reason"
+    case Undated(url, items)      =>
+      s"${url.value} has $items items but none has a date (pubDate or updated), so new ones can't be detected"
 
 object FeedError:
   given CanEqual[FeedError, FeedError] = CanEqual.derived

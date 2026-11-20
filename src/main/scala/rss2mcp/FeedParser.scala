@@ -15,7 +15,7 @@ object FeedParser:
   /**
    * The feed's items that have an id and a date, newest first. An item with
    * neither a published nor an updated date can't be placed after a cursor, so
-   * it is left out.
+   * it is left out, and a feed whose items all lack one is [[FeedError.Undated]].
    */
   def parse(url: FeedUrl, bytes: Chunk[Byte]): Either[FeedError, Chunk[FeedItem]] =
     html(url, bytes).fold(xml(url, bytes))(Left(_))
@@ -27,10 +27,13 @@ object FeedParser:
       // to nothing and doesn't expand entities, so an XXE reads nothing.
       val input = SyndFeedInput()
       input.setAllowDoctypes(true)
-      Chunk.fromIterable(input.build(reader).nn.getEntries.nn.asScala).flatMap(item)
+      Chunk.fromIterable(input.build(reader).nn.getEntries.nn.asScala)
     .toEither
     .left.map(e => FeedError.Unparseable(url, Option(e.getMessage).getOrElse(e.getClass.getSimpleName)))
-    .map(_.sortBy(_.published).reverse)
+    .flatMap: entries =>
+      val items = entries.flatMap(item)
+      if entries.nonEmpty && items.isEmpty then Left(FeedError.Undated(url, entries.size))
+      else Right(items.sortBy(_.published).reverse)
 
   /**
    * An HTML page rather than a feed, as people often give a site's address:

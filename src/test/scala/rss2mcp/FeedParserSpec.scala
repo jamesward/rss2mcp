@@ -38,8 +38,12 @@ object FeedParserSpec extends ZIOSpecDefault:
           |<rss version="0.91"><channel><title>Old</title><link>https://example.com</link><description>d</description>
           |<item><title>Hello</title><link>https://example.com/hello</link><description>hi</description></item>
           |</channel></rss>""".stripMargin
-      // RSS 0.91 items have no dates, so the feed parses but has no items to deliver.
-      assertTrue(parse(rss091).isRight)
+      // RSS 0.91 items have no dates: the feed parses, but can't be followed.
+      assertTrue(parse(rss091) == Left(FeedError.Undated(Fixtures.feedUrl, 1)))
+    ,
+    test("a feed with no items isn't undated: there's just nothing yet"):
+      val empty = """<rss version="2.0"><channel><title>t</title><link>https://example.com</link><description>d</description></channel></rss>"""
+      assertTrue(parse(empty).map(_.size) == Right(0))
     ,
     test("an external entity is never read"):
       val xxe =
