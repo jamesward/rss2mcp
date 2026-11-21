@@ -38,6 +38,8 @@ The MCP server is `sbta` (this build's `./sbta --mcp`), configured in `.kiro/set
   MCP server over loopback against an in-memory `Feeds`.
 - To work on zio-http-mcp together with this project, check it out at `../zio-http-mcp` and run
   `./sbta -Dlocal ...`, which builds against that checkout instead of the published artifact.
+- To try an unreleased zio-http-mcp commit on Heroku, `heroku config:set -a rss2mcp ZIO_HTTP_MCP_REF=<commit>`
+  and redeploy: the build clones that commit from GitHub as a source dependency. Unset it to go back to the release.
 
 ## Webhooks
 

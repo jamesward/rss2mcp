@@ -8,15 +8,22 @@ scalacOptions ++= Seq(
   "-Werror",
 )
 
-// ./sbta -Dlocal ...  builds against ../zio-http-mcp instead of the published artifact
+// ./sbta -Dlocal ...  builds against ../zio-http-mcp instead of the published artifact.
+// ZIO_HTTP_MCP_REF=<commit> builds against that commit of zio-http-mcp on GitHub, to try an
+// unreleased change on Heroku (heroku config:set ZIO_HTTP_MCP_REF=...); unset it to go back.
 val useLocal = sys.props.contains("local")
 val localZioHttpMcp = file("../zio-http-mcp")
+val gitRef = sys.env.get("ZIO_HTTP_MCP_REF").map(_.trim).filter(_.nonEmpty)
+
+val zioHttpMcpSource: Option[ProjectReference] =
+  if useLocal then Some(RootProject(localZioHttpMcp))
+  else gitRef.map(ref => RootProject(uri(s"https://github.com/jamesward/zio-http-mcp.git#$ref")))
 
 lazy val root = (project in file(".")).dependsOn(
-  Option.when(useLocal)(RootProject(localZioHttpMcp): ClasspathDep[ProjectReference]).toSeq *
+  zioHttpMcpSource.map(p => p: ClasspathDep[ProjectReference]).toSeq *
 )
 
-libraryDependencies ++= Option.unless(useLocal)("com.jamesward" %% "zio-http-mcp" % "0.14.0").toSeq
+libraryDependencies ++= Option.when(zioHttpMcpSource.isEmpty)("com.jamesward" %% "zio-http-mcp" % "0.14.0").toSeq
 
 val zioVersion = "2.1.27"
 
