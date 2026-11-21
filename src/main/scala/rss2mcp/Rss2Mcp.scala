@@ -69,5 +69,6 @@ object Rss2Mcp:
         LogAnnotation("accept", header("accept")),
       )(ZIO.logInfo("Request received")).as((request, ())))
 
-  def routes(server: McpServer[Feeds]): Routes[Feeds & McpServer.State, Response] =
-    server.routes @@ requestHeaders @@ Middleware.requestLogging() @@ requestId
+  def routes(server: McpServer[Feeds], extra: Routes[Any, Response] = Routes.empty)
+    : Routes[Feeds & McpServer.State, Response] =
+    (extra ++ server.routes) @@ requestHeaders @@ Middleware.requestLogging() @@ requestId

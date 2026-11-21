@@ -40,6 +40,7 @@ object ItemEvents:
                    LogAnnotation("items", items.size.toString),
                    LogAnnotation("events", batch.events.size.toString),
                    LogAnnotation("event_ids", batch.events.flatMap(_.eventId).mkString(" ")),
+                   LogAnnotation("titles", batch.events.flatMap(_.data.title).mkString(" | ")),
                    LogAnnotation("truncated", batch.truncated.toString),
                    LogAnnotation("has_more", batch.hasMore.toString),
                  ):

@@ -24,8 +24,12 @@ object Main extends ZIOAppDefault:
                  LogAnnotation("webhook_anonymous", Rss2Mcp.webhooks.anonymous.toString),
                )(ZIO.logInfo("rss2mcp starting"))
       _     <- ZIO.scoped(
-                 Rss2Mcp.server(PollInterval).mapError(e => IllegalStateException(e.toString))
-                   .flatMap(server => Server.serve[Feeds & McpServer.State](Rss2Mcp.routes(server)))
+                 for
+                   debug  <- DebugFeed.fromEnv
+                   _      <- ZIO.logInfo(s"Debug feed ${if debug.isDefined then "on: GET /debug/feed.xml, POST /debug/items" else "off"}")
+                   server <- Rss2Mcp.server(PollInterval).mapError(e => IllegalStateException(e.toString))
+                   _      <- Server.serve[Feeds & McpServer.State](Rss2Mcp.routes(server, debug.fold(Routes.empty)(_.routes)))
+                 yield ()
                ).provide(
                  Server.defaultWithPort(port),
                  Feeds.client,
