@@ -83,6 +83,10 @@ object ItemEventsSpec extends ZIOSpecDefault:
         ItemEvents.error(fresh = false)(FeedError.Undated(feedUrl, 3)) == McpEventError.Upstream(FeedError.Undated(feedUrl, 3).message),
       )
     ,
+    test("a cursor days ahead of the clock restarts from the newest item not in the future, and says so"):
+      val batch = since(from = cursor(10 + 3 * 24 * 60))
+      assertTrue(batch.events.isEmpty, batch.truncated, batch.cursor == cursor(3))
+    ,
     test("an event id is header-safe and stable, whatever the item id"):
       val id = ItemId("https://news.ycombinator.com/item?id=50583820")
       assertTrue(

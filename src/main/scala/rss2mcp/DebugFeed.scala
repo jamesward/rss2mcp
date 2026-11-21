@@ -31,7 +31,8 @@ final case class DebugFeed(token: String, items: Ref[Chunk[DebugFeed.Item]]):
         ZIO.logWarning("Debug item refused: no valid bearer token").as(Response.status(Status.Unauthorized))
       else
         for
-          now   <- Clock.instant
+          // Whole seconds: Rome reads a nanosecond fraction as milliseconds.
+          now   <- Clock.instant.map(_.truncatedTo(java.time.temporal.ChronoUnit.SECONDS))
           count <- items.modify(all => (all.size + 1, all))
           title  = request.queryParam("title").filter(_.trim.nonEmpty).getOrElse(s"rss2mcp debug item $count")
           item   = Item(s"urn:rss2mcp:debug:${now.toEpochMilli}:$count", Text.shorten(title, 500), now)

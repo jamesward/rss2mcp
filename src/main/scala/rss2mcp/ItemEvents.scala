@@ -77,6 +77,10 @@ object ItemEvents:
       case None          => McpEventBatch.empty(Some(cursorAt(newest)))
       // Not a cursor this server wrote: start from now and say events may be missed.
       case Some(None)    => McpEventBatch(Chunk.empty, Some(cursorAt(newest)), truncated = true)
+      // A cursor ahead of the clock came from a misdated item: no later item would ever pass it, so start over.
+      case Some(Some(from)) if from.isAfter(now.plus(FutureSlack)) =>
+        McpEventBatch(Chunk.empty, Some(cursorAt(items.map(_.published).filterNot(_.isAfter(now)).maxOption.getOrElse(now))),
+          truncated = true)
       case Some(Some(from)) =>
         val unseen   = items.filter(_.published.isAfter(from)).sortBy(_.published)
         val oldest   = maxAge.map(age => now.minus(age).nn)
@@ -97,5 +101,8 @@ object ItemEvents:
           truncated = recent.size < unseen.size,
           hasMore = hasMore,
         )
+
+  /** How far ahead of the server's clock an item date may be before it is taken as wrong. */
+  val FutureSlack: Duration = 1.day
 
   private def cursorAt(instant: Instant): McpEventCursor = McpEventCursor(instant.toEpochMilli.toString)
