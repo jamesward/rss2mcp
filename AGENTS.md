@@ -38,8 +38,6 @@ The MCP server is `sbta` (this build's `./sbta --mcp`), configured in `.kiro/set
   MCP server over loopback against an in-memory `Feeds`.
 - To work on zio-http-mcp together with this project, check it out at `../zio-http-mcp` and run
   `./sbta -Dlocal ...`, which builds against that checkout instead of the published artifact.
-- To try an unreleased zio-http-mcp commit on Heroku, `heroku config:set -a rss2mcp ZIO_HTTP_MCP_REF=<commit>`
-  and redeploy: the build clones that commit from GitHub as a source dependency. Unset it to go back to the release.
 
 ## Webhooks
 
@@ -52,16 +50,11 @@ The MCP server is `sbta` (this build's `./sbta --mcp`), configured in `.kiro/set
 - To check a restart in the logs: after it, `events/subscribe` logs `refreshed=false` with a non-null
   `cursor_in`, then `Feed check found new items` for what was missed.
 
-## Debug feed
-
-With the `DEBUG_TOKEN` config var set, the server also serves `GET /debug/feed.xml`, an Atom feed of the
-items added with `curl -X POST -H "Authorization: Bearer $DEBUG_TOKEN" "https://<host>/debug/items?title=Hello"`.
-Subscribing a client to the server's own `/debug/feed.xml` gives one event within about a minute of each POST,
-so a webhook client can be tested on demand. Unset `DEBUG_TOKEN` to turn it off.
-
 ## Production
 
-- Not deployed yet: there is no Heroku app.
+- Heroku app `rss2mcp`, served at `https://rss2mcp.jamesward.dev/`, one `web` dyno, with the buildpacks
+  `heroku/jvm` and `https://github.com/jamesward/buildpack-scala`. Deploy with
+  `git push https://git.heroku.com/rss2mcp.git main`. Config vars: `LOG_LEVEL` (optional).
 - Logs are one JSON object per line on stdout (`zio-logging` console JSON logger with the SLF4J bridge,
   `AppLogging`), with `request_id` from `X-Request-ID` on every entry made during a request. `LOG_LEVEL`
   sets the floor (`INFO` when unset; Java libraries stay at `INFO` or above). At `INFO` the logs show each
@@ -69,7 +62,7 @@ so a webhook client can be tested on demand. Unset `DEBUG_TOKEN` to turn it off.
   from zio-http-mcp, every events method and webhook POST. `DEBUG` adds every feed check, each HTTP hop of a
   fetch, and webhook watermarks. Request bodies, tokens and webhook secrets are never logged; a session id is
   logged as its first 8 characters.
-- Runtime metrics (`log-runtime-metrics`) are not on, because there is no app yet.
+- Runtime metrics (`log-runtime-metrics`) are not on.
 
 ## Maintenance routine
 
