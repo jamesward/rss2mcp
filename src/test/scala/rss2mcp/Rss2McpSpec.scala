@@ -59,6 +59,14 @@ object Rss2McpSpec extends ZIOSpecDefault:
       yield signals
 
   def spec = suite("rss2mcp")(
+    test("GET /health answers 200 ok"):
+      ZIO.scoped:
+        for
+          (_, port, _) <- install(Map.empty)
+          response     <- ZClient.batched(Request.get(URL.decode(s"http://localhost:$port/health").toOption.get))
+          body         <- response.body.asString
+        yield assertTrue(response.status.code == 200, body == "ok")
+    ,
     test("events/list describes feed.item.published"):
       ZIO.scoped:
         for
