@@ -14,7 +14,7 @@ Subscription arguments (`inputSchema`):
 
 Each event's `data` (`payloadSchema`) holds the item's `feedUrl`, `itemId`, `title`, `link`, `published`, `author`, `categories` and a plain-text `summary` shortened to 2,000 characters, so a delivery stays far below the 256 KiB limit. The item's id (`itemId`) is its RSS `guid` or Atom `id`, otherwise its link. The event id is derived from it, `item_` and 32 hex characters of its SHA-256, so it's stable and can be the `webhook-id` header, which ChatGPT wants equal to the event id.
 
-Delivery is by poll (`events/poll`), push (`events/stream`) and webhook (`events/subscribe`). Webhook subscriptions are anonymous and last at most 15 minutes between refreshes. The server runs zio-http-mcp's `KnownClients` compatibility: ChatGPT gets the draft dialect it implements (`capabilities.events`, the events methods on a 2025 session, `-32015` for a callback error, webhook delivery alone in `events/list`), chosen by its `openai-mcp` client name, and clients that don't declare the extension get the event id as `webhook-id`; zio-http-mcp's README has the details. In ChatGPT, events post as messages for a watch set up in Dot; a Work chat's task gets them but its messages don't appear. The server reads a subscribed feed once a minute (`Main.PollInterval`), and subscriptions to the same feed share one fetch, so an event is at most about a minute behind the feed.
+Delivery is by poll (`events/poll`), push (`events/stream`) and webhook (`events/subscribe`). Webhook subscriptions are anonymous and last at most 15 minutes between refreshes. The server runs zio-http-mcp's `KnownClients` compatibility: ChatGPT gets the draft dialect it implements (`capabilities.events`, the events methods on a 2025 session, `-32015` for a callback error, webhook delivery alone in `events/list`), chosen by its `openai-mcp` client name, and clients that don't declare the extension get the event id as `webhook-id`; zio-http-mcp's README has the details. In ChatGPT, set up a watch in Dot: see [Using it from ChatGPT](#using-it-from-chatgpt). The server reads a subscribed feed once a minute (`Main.PollInterval`), and subscriptions to the same feed share one fetch, so an event is at most about a minute behind the feed.
 
 The cursor is the publish time, in epoch milliseconds, of the newest item a subscription has passed, matched or not. A client can persist it and resume from it after a restart. That has consequences:
 
@@ -39,6 +39,22 @@ Once subscribed (a request with a cursor), every failure to read the feed is `-3
 ## Fetching
 
 Each feed is fetched at most once a minute, whatever its number of subscriptions, and only while it has one: a subscription that ends, or isn't refreshed, stops its checks. A fetch gives up after 20 seconds (10 to connect). A feed that fails isn't fetched again for 30 seconds, doubled for each failure in a row up to 15 minutes, and a fetch that succeeds starts over; meanwhile its checks and new subscriptions get the last error. Items published while a feed was failing are delivered by the first fetch that succeeds, as long as the feed still lists them. A webhook subscription whose callback endpoint doesn't echo the verification challenge is refused with `-32027` (`-32015` for ChatGPT).
+
+## Using it from ChatGPT
+
+Add rss2mcp in ChatGPT's developer mode as a custom MCP server at `https://<host>/` with No Authentication, then ask for a watch, for example:
+
+> Use rss2mcp to watch https://hnrss.org/newest. Each time items arrive, post a message here with each item's title and link.
+
+**Ask in Dot.** Seen on 23 Nov 2026, on Plus and on Pro: a watch set up in Dot posts a message for each delivery, about a minute after the item is published. A watch set up from a Work chat doesn't:
+
+- ChatGPT subscribes, the callback passes verification, and the Work chat shows a task (named, for example, "Monitoring RSS Feed Items and Posting Links").
+- Each event is delivered and accepted (`200`), and the task's agent runs on it: it calls `get_item` 10 to 20 seconds later.
+- No message appears in the chat, in the task, after a reload, or in the mobile app. Asked in that chat, the agent answers that it received the event and posted it there.
+- The same happened with every server tried: rss2mcp, a minimal server written to OpenAI's [MCP Events guide](https://developers.openai.com/plugins/build/mcp-events), and Hookdeck's [mcp-events-outpost-demo](https://github.com/hookdeck/mcp-events-outpost-demo) deployed unchanged, which its README records posting in a Work chat on 13 Nov. So it's on ChatGPT's side, not the server's.
+- Hookdeck showed [mcp-events-bridge](https://github.com/hookdeck/mcp-events-bridge) posting in a Work chat in ChatGPT's Android app the same day, under a task label ("Inbound email alerts >"), so it may depend on the account or on a rollout.
+
+In the server's logs, Dot subscribes with the User-Agent `openai-mcp/1.0.0` and a Work chat's task with `openai-mcp/1.0.0 (Codex)`. Deleting a Work chat's task in Tasks unsubscribes it; until then it keeps receiving events.
 
 ## Tool: `get_item`
 
