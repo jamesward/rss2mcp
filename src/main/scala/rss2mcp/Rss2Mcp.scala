@@ -34,7 +34,8 @@ object Rss2Mcp:
    * a client's next refresh resubscribes it from its cursor, and the feed
    * replays what it missed.
    */
-  val webhooks: McpWebhookConfig = McpWebhookConfig(maxTtl = 15.minutes, defaultTtl = 15.minutes, anonymous = true)
+  val webhooks: McpWebhookConfig = McpWebhookConfig(maxTtl = 15.minutes, defaultTtl = 15.minutes, anonymous = true,
+    compatibility = McpEventsCompatibility.KnownClients)
 
   def server(pollInterval: Duration, webhooks: McpWebhookConfig = webhooks)
     : ZIO[Feeds & McpWebhookStore & Scope, McpEventsError, McpServer[Feeds]] =

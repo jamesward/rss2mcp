@@ -23,7 +23,7 @@ lazy val root = (project in file(".")).dependsOn(
   zioHttpMcpSource.map(p => p: ClasspathDep[ProjectReference]).toSeq *
 )
 
-libraryDependencies ++= Option.when(zioHttpMcpSource.isEmpty)("com.jamesward" %% "zio-http-mcp" % "0.14.0").toSeq
+libraryDependencies ++= Option.when(zioHttpMcpSource.isEmpty)("com.jamesward" %% "zio-http-mcp" % "0.15.0").toSeq
 
 val zioVersion = "2.1.27"
 

@@ -44,7 +44,7 @@ The MCP server is `sbta` (this build's `./sbta --mcp`), configured in `.kiro/set
 ## Webhooks
 
 - Webhook subscriptions are anonymous (`McpWebhookConfig(anonymous = true)`): rss2mcp has no sign-in, and its
-  feeds are public. ChatGPT gets its draft dialect by default (zio-http-mcp `McpEventsDialect.auto`).
+  feeds are public. The server uses zio-http-mcp's `McpEventsCompatibility.KnownClients`, which gives ChatGPT its draft dialect (the default, `Spec`, would not). In ChatGPT, subscribe from Dot: a Work chat's task receives events but its messages don't appear.
 - `InMemoryWebhookStore` keeps subscriptions in a `Ref`, so a restart (Heroku cycles dynos daily) loses them.
   Granted TTLs are at most 15 minutes, so a client's next refresh resubscribes with its cursor and the feed
   replays what it missed: items arrive up to 15 minutes late, and are lost only if more were posted than the
