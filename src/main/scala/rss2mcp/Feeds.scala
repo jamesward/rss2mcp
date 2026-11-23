@@ -22,7 +22,10 @@ object Feeds:
    *
    * A connection stays open for `IdleTimeout` between fetches, longer than the
    * one-minute poll, so a feed's next fetch reuses it rather than connecting
-   * again. A busy feed host can drop new connections (hnrss.org loses some of
+   * again. The pool is dynamic and starts empty: zio-http's default, a fixed
+   * pool of 10, opens all 10 connections to a host on its first request (11 s
+   * to an address that doesn't answer, with a 1 s connect timeout), and one of
+   * them that failed in the background fails a later fetch at once. A busy feed host can drop new connections (hnrss.org loses some of
    * their SYNs, so a connect takes 1, 3 or 7 seconds, or fails); a reused one
    * skips that. A new connection gives up after `ConnectTimeout`, inside a
    * fetch's `timeout`, so the client fails it rather than the fetch's timeout
@@ -30,7 +33,8 @@ object Feeds:
    */
   val client: ZLayer[Any, Throwable, Client] =
     (ZLayer.succeed(ZClient.Config.default.ssl(ClientSSLConfig.FromSystemTrustStore)
-      .connectionTimeout(ConnectTimeout).idleTimeout(IdleTimeout)) ++
+      .connectionTimeout(ConnectTimeout).idleTimeout(IdleTimeout)
+      .dynamicConnectionPool(minimum = 0, maximum = 10, ttl = IdleTimeout)) ++
       ZLayer.succeed(NettyConfig.defaultWithFastShutdown) ++ DnsResolver.default) >>> Client.live
 
   /** Covers a SYN retransmitted at 15 seconds (after 1, 2 and 4 seconds lost), and leaves room in a 20-second fetch. */
