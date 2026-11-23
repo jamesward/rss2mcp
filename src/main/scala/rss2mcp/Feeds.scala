@@ -34,23 +34,61 @@ object Feeds:
     /** How long a fetched feed is reused, so subscriptions to one feed share a fetch. */
     ttl: Duration = 1.minute,
     capacity: Int = 10_000,
-  )
+    /**
+     * A feed that fails is not fetched again for `backoff`, doubled for each failure in a row, up to
+     * `maxBackoff`; a fetch that succeeds starts over. Meanwhile its subscribers get the last error.
+     */
+    backoff: Duration = 30.seconds,
+    maxBackoff: Duration = 15.minutes,
+  ):
+    /** How long to wait after `failures` failed fetches in a row. */
+    def backoffAfter(failures: Int): Duration =
+      val doubled = backoff.toMillis * (1L << (failures - 1).min(30))
+      Duration.fromMillis(doubled.min(maxBackoff.toMillis))
+
+  /** A feed whose last `failures` fetches failed: it isn't fetched again before `retryAt`. */
+  final case class Failing(failures: Int, error: FeedError, retryAt: java.time.Instant)
 
   /** Fetches feeds over HTTP, after `guard` allows each hop, and caches them for `config.ttl`. */
   def http(config: Config, guard: HostGuard): ZLayer[Client, Nothing, Feeds] =
     ZLayer.scoped:
       for
-        client <- ZIO.service[Client]
-        scope  <- ZIO.scope
-        fetch   = HttpFetch(client, config, guard)
+        client  <- ZIO.service[Client]
+        scope   <- ZIO.scope
+        failing <- Ref.make(Map.empty[FeedUrl, Failing])
+        fetch    = HttpFetch(client, config, guard)
         cache  <- Cache.makeWith(config.capacity, Lookup(fetch.uninterrupted)):
                     case Exit.Success(_) => config.ttl
-                    case Exit.Failure(_) => 10.seconds
+                    // A failure is shared by the callers waiting for it, then not kept: the backoff decides
+                    // when the feed is fetched again.
+                    case Exit.Failure(_) => Duration.Zero
       yield new Feeds:
         // On a fiber of its own: when the caller that started a fetch is interrupted (a client that hangs
         // up, a router's timeout), zio-cache interrupts every caller waiting for that fetch too, and an
         // interrupted request ends without an answer. Interrupting a caller only stops its own join.
-        def items(url: FeedUrl): IO[FeedError, Chunk[FeedItem]] = cache.get(url).forkIn(scope).flatMap(_.join)
+        def items(url: FeedUrl): IO[FeedError, Chunk[FeedItem]] =
+          Clock.instant.flatMap: now =>
+            failing.get.map(_.get(url).filter(_.retryAt.isAfter(now))).flatMap:
+              case Some(f) =>
+                ZIO.logAnnotate(LogAnnotation("feed", url.value), LogAnnotation("failures", f.failures.toString),
+                  LogAnnotation("retry_at", f.retryAt.toString))(ZIO.logDebug("Feed backing off")) *> ZIO.fail(f.error)
+              case None =>
+                cache.get(url).forkIn(scope).flatMap(_.join).tapBoth(failed(url, _), _ => failing.update(_ - url))
+
+        // Callers that shared one failed fetch count it once: the first sets a retryAt in the future.
+        private def failed(url: FeedUrl, error: FeedError): UIO[Unit] =
+          Clock.instant.flatMap: now =>
+            failing.modify: all =>
+              all.get(url) match
+                case Some(f) if f.retryAt.isAfter(now) => (None, all)
+                case previous =>
+                  val failures = previous.fold(1)(_.failures + 1)
+                  val next     = Failing(failures, error, now.plus(config.backoffAfter(failures)))
+                  (Some(next), all.updated(url, next))
+            .flatMap: recorded =>
+              ZIO.foreachDiscard(recorded): f =>
+                ZIO.logAnnotate(LogAnnotation("feed", url.value), LogAnnotation("failures", f.failures.toString),
+                  LogAnnotation("retry_at", f.retryAt.toString))(ZIO.logInfo("Feed backing off after a failed fetch"))
 
   private final case class HttpFetch(client: Client, config: Config, guard: HostGuard):
     /**

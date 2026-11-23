@@ -63,6 +63,41 @@ object FeedsSpec extends ZIOSpecDefault:
         count   <- fetches.get
       yield assertTrue(size == 2, count == 1)
     ,
+    test("a feed that keeps failing is fetched less often, and a success starts over"):
+      for
+        fetches <- Ref.make(0)
+        healthy <- Ref.make(false)
+        flaky    = Routes(Method.GET / "flaky.xml" -> handler(fetches.update(_ + 1) *> healthy.get.map: ok =>
+                     if ok then Response.text(Fixtures.rss) else Response.status(Status.ServiceUnavailable)))
+        config   = Feeds.Config(ttl = 1.milli, backoff = 300.millis, maxBackoff = 1.second)
+        result  <- withFeeds(config, HostGuard.allowAll, flaky): (port, feeds) =>
+                     val get = feeds.items(url(port, "flaky.xml")).either
+                     for
+                       first   <- get                    // fails: backs off 300 ms
+                       backing <- get                    // within the backoff: no fetch
+                       _       <- ZIO.sleep(400.millis)
+                       second  <- get                    // fetched, fails again: backs off 600 ms
+                       _       <- ZIO.sleep(400.millis)
+                       still   <- get                    // still backing off
+                       count1  <- fetches.get
+                       _       <- healthy.set(true)
+                       _       <- ZIO.sleep(300.millis)
+                       ok      <- get                    // fetched, and succeeds
+                       again   <- get.delay(10.millis)   // no backoff after a success
+                       count2  <- fetches.get
+                     yield (first.isLeft && backing.isLeft && second.isLeft && still.isLeft, count1, ok.isRight && again.isRight, count2)
+      yield assertTrue(result._1, result._2 == 2, result._3, result._4 == 4)
+    ,
+    test("the backoff doubles up to its maximum"):
+      val config = Feeds.Config(backoff = 30.seconds, maxBackoff = 15.minutes)
+      assertTrue(
+        config.backoffAfter(1).toMillis == 30_000L,
+        config.backoffAfter(2).toMillis == 60_000L,
+        config.backoffAfter(5).toMillis == 480_000L,
+        config.backoffAfter(6).toMillis == 900_000L,
+        config.backoffAfter(100).toMillis == 900_000L,
+      )
+    ,
     test("a feed served with a certificate the JDK doesn't trust isn't read"):
       ZIO.scoped:
         for

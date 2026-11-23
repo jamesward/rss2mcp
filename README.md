@@ -34,7 +34,11 @@ The first check of a new subscription reads the feed, so a bad `feedUrl` is answ
 | An HTML page | `-32602`, naming the feeds the page links to (`<link rel="alternate">`), if any |
 | An unreachable host, a timeout or an HTTP 5xx, which may pass | `-32603` |
 
-Once subscribed (a request with a cursor), every failure to read the feed is `-32603`: a push subscription reports it on the stream, and a webhook subscription logs it, and both keep checking. A webhook subscription whose callback endpoint doesn't echo the verification challenge is refused with `-32027` (`-32015` for ChatGPT).
+Once subscribed (a request with a cursor), every failure to read the feed is `-32603`: a push subscription reports it on the stream, and a webhook subscription logs it, and both keep checking.
+
+## Fetching
+
+Each feed is fetched at most once a minute, whatever its number of subscriptions, and only while it has one: a subscription that ends, or isn't refreshed, stops its checks. A fetch gives up after 20 seconds (10 to connect). A feed that fails isn't fetched again for 30 seconds, doubled for each failure in a row up to 15 minutes, and a fetch that succeeds starts over; meanwhile its checks and new subscriptions get the last error. Items published while a feed was failing are delivered by the first fetch that succeeds, as long as the feed still lists them. A webhook subscription whose callback endpoint doesn't echo the verification challenge is refused with `-32027` (`-32015` for ChatGPT).
 
 ## Tool: `get_item`
 
