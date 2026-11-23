@@ -72,6 +72,23 @@ object ItemEventsSpec extends ZIOSpecDefault:
         later == McpEventError.Upstream(s"${feedUrl.value} answered HTTP 404"),
       )
     ,
+    test("once subscribed, a feed that may come back keeps the cursor and gets nothing, rather than an error"):
+      val down: Feeds = (url: FeedUrl) => ZIO.fail(FeedError.Unreachable(url, "connection timed out"))
+      val request = (from: Option[McpEventCursor]) =>
+        McpEventRequest(everything, from, None, 100, McpRequestContext(ProtocolVersion.V2026_07_28))
+      for
+        fresh <- ItemEvents.check(request(None)).provideEnvironment(ZEnvironment(down)).flip
+        later <- ItemEvents.check(request(cursor(1))).provideEnvironment(ZEnvironment(down))
+      yield assertTrue(
+        fresh == McpEventError.Upstream(s"Can't reach ${feedUrl.value}: connection timed out"),
+        later.events.isEmpty,
+        later.cursor == cursor(1),
+        ItemEvents.transient(FeedError.HttpStatus(feedUrl, 503)),
+        ItemEvents.transient(FeedError.HttpStatus(feedUrl, 429)),
+        !ItemEvents.transient(FeedError.HttpStatus(feedUrl, 404)),
+        !ItemEvents.transient(FeedError.Unparseable(feedUrl, "html")),
+      )
+    ,
     test("blocked hosts are Forbidden, and unreachable ones and 5xx are Upstream even for a new subscription"):
       val fresh = ItemEvents.error(fresh = true)
       assertTrue(

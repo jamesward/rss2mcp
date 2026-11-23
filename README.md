@@ -34,7 +34,7 @@ The first check of a new subscription reads the feed, so a bad `feedUrl` is answ
 | An HTML page | `-32602`, naming the feeds the page links to (`<link rel="alternate">`), if any |
 | An unreachable host, a timeout or an HTTP 5xx, which may pass | `-32603` |
 
-Once subscribed (a request with a cursor), every failure to read the feed is `-32603`: a push subscription reports it on the stream, and a webhook subscription logs it, and both keep checking.
+Once subscribed (a request with a cursor), a failure that may pass (an unreachable host, a timeout, an HTTP 5xx or 429) isn't an error: the check delivers nothing, keeps the cursor and is logged, and the next check that reads the feed delivers what was missed. So a client that resubscribes with its cursor, after the server restarted, is subscribed even while the feed is down. Any other failure is `-32603`: a push subscription reports it on the stream, and a webhook subscription logs it, and both keep checking.
 
 ## Fetching
 

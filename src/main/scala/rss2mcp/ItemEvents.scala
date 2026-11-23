@@ -30,24 +30,49 @@ object ItemEvents:
       LogAnnotation("cursor_in", request.cursor.fold("null")(_.value)),
       LogAnnotation("protocol", request.context.protocolVersion.wire),
     ):
-      for
-        items <- ZIO.serviceWithZIO[Feeds](_.items(subscription.feedUrl)).mapError(error(request.cursor.isEmpty))
-                   .tapError(e => ZIO.logWarning(s"Feed check failed: ${e.detail.message}"))
-        now   <- Clock.instant
-        batch  = since(subscription, items, request.cursor, request.maxAge, request.maxEvents, now)
-        _     <- ZIO.logAnnotate(
-                   LogAnnotation("cursor_out", batch.cursor.fold("null")(_.value)),
-                   LogAnnotation("items", items.size.toString),
-                   LogAnnotation("events", batch.events.size.toString),
-                   LogAnnotation("event_ids", batch.events.flatMap(_.eventId).mkString(" ")),
-                   LogAnnotation("titles", batch.events.flatMap(_.data.title).mkString(" | ")),
-                   LogAnnotation("truncated", batch.truncated.toString),
-                   LogAnnotation("has_more", batch.hasMore.toString),
-                 ):
-                   if batch.events.nonEmpty then ZIO.logInfo("Feed check found new items")
-                   else if request.cursor.isEmpty then ZIO.logInfo("Feed subscription starts from now")
-                   else ZIO.logDebug("Feed check found nothing new")
-      yield batch
+      ZIO.serviceWithZIO[Feeds](_.items(subscription.feedUrl)).foldZIO(failed(request.cursor), read(request, _))
+
+  /**
+   * A check whose feed couldn't be read. With a cursor and a failure that may pass
+   * (unreachable, a timeout, a 5xx or a 429), the subscription keeps its cursor and
+   * gets nothing this time, rather than an error: a client resubscribing with its
+   * cursor (after the server restarted, say) is subscribed while the feed is down,
+   * and the next check that reads it delivers what was missed. Any other failure is
+   * the subscriber's error.
+   */
+  private def failed(cursor: Option[McpEventCursor])(e: FeedError): ZIO[Any, McpEventError, McpEventBatch[ItemPublished]] =
+    cursor.filter(_ => transient(e)) match
+      case Some(kept) =>
+        ZIO.logWarning(s"Feed check failed, keeping the cursor: ${e.message}").as(McpEventBatch.empty(Some(kept)))
+      case None =>
+        val refused = error(cursor.isEmpty)(e)
+        ZIO.logWarning(s"Feed check failed: ${refused.detail.message}") *> ZIO.fail(refused)
+
+  /** A failure that may pass: the feed was read before, and may be read again. */
+  def transient(e: FeedError): Boolean = e match
+    case FeedError.Unreachable(_, _)    => true
+    case FeedError.HttpStatus(_, status) => status >= 500 || status == 429
+    case _                               => false
+
+  private def read(request: McpEventRequest[FeedSubscription], items: Chunk[FeedItem])
+    : ZIO[Any, Nothing, McpEventBatch[ItemPublished]] =
+    val subscription = request.arguments
+    for
+      now   <- Clock.instant
+      batch  = since(subscription, items, request.cursor, request.maxAge, request.maxEvents, now)
+      _     <- ZIO.logAnnotate(
+                 LogAnnotation("cursor_out", batch.cursor.fold("null")(_.value)),
+                 LogAnnotation("items", items.size.toString),
+                 LogAnnotation("events", batch.events.size.toString),
+                 LogAnnotation("event_ids", batch.events.flatMap(_.eventId).mkString(" ")),
+                 LogAnnotation("titles", batch.events.flatMap(_.data.title).mkString(" | ")),
+                 LogAnnotation("truncated", batch.truncated.toString),
+                 LogAnnotation("has_more", batch.hasMore.toString),
+               ):
+                 if batch.events.nonEmpty then ZIO.logInfo("Feed check found new items")
+                 else if request.cursor.isEmpty then ZIO.logInfo("Feed subscription starts from now")
+                 else ZIO.logDebug("Feed check found nothing new")
+    yield batch
 
   /**
    * A feed that can't be read. Without a cursor the subscription is new, so a
