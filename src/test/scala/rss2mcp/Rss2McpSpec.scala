@@ -21,11 +21,18 @@ object Rss2McpSpec extends ZIOSpecDefault:
   private def install(initial: Map[FeedUrl, Chunk[FeedItem]], extra: Routes[Any, Response] = Routes.empty) =
     for
       feeds  <- FakeFeeds.make(initial)
+      store  <- InMemoryWebhookStore.layer.build.map(_.get)
       server <- Rss2Mcp.server(100.millis, localWebhooks)
-                  .provideSomeLayer[Scope](ZLayer.succeed[Feeds](feeds) ++ InMemoryWebhookStore.layer)
+                  .provideSomeLayer[Scope](ZLayer.succeed[Feeds](feeds) ++ ZLayer.succeed(store))
       port   <- Server.install(Rss2Mcp.routes(server) ++ extra)
-                  .provideSomeLayer[Server & Scope](ZLayer.succeed[Feeds](feeds) ++ McpServer.State.default)
+                  .provideSomeLayer[Server & Scope](ZLayer.succeed[Feeds](feeds) ++ ZLayer.succeed(store) ++ McpServer.State.default)
     yield (feeds, port, McpClientConfig(s"http://localhost:$port/"))
+
+  private def health(port: Int) =
+    for
+      response <- ZClient.batched(Request.get(URL.decode(s"http://localhost:$port/health").toOption.get))
+      body     <- response.body.asString
+    yield (response.status.code, body.fromJson[Json.Obj].toOption.get)
 
   /** A webhook endpoint that echoes verification challenges and keeps every POST body. */
   private def receiver(bodies: Queue[Json.Obj]): Routes[Any, Response] =
@@ -59,13 +66,20 @@ object Rss2McpSpec extends ZIOSpecDefault:
       yield signals
 
   def spec = suite("rss2mcp")(
-    test("GET /health answers 200 ok"):
+    test("GET /health answers 200 with no feeds before any subscription"):
       ZIO.scoped:
         for
           (_, port, _) <- install(Map.empty)
-          response     <- ZClient.batched(Request.get(URL.decode(s"http://localhost:$port/health").toOption.get))
-          body         <- response.body.asString
-        yield assertTrue(response.status.code == 200, body == "ok")
+          (status, body) <- health(port)
+        yield assertTrue(status == 200, body.get("status").contains(Json.Str("ok")),
+          body.get("feeds").contains(Json.Arr()), body.get("webhookSubscriptions").contains(Json.Num(0)))
+    ,
+    test("a feed URL is shown without its query"):
+      assertTrue(
+        Health.shown(FeedUrl.parse("https://example.com/private.xml?token=secret").toOption.get) ==
+          "https://example.com/private.xml?…",
+        Health.shown(FeedUrl.parse("http://localhost:8080/feed").toOption.get) == "http://localhost:8080/feed",
+      )
     ,
     test("events/list describes feed.item.published"):
       ZIO.scoped:
@@ -117,9 +131,15 @@ object Rss2McpSpec extends ZIOSpecDefault:
           _                   <- feeds.publish(feedUrl, item("kotlin", 2, "Kotlin news")) *>
                                    feeds.publish(feedUrl, item("zio", 3, "ZIO news"))
           delivery            <- bodies.take.timeoutFail(RuntimeException("no delivery"))(10.seconds)
+          (_, report)         <- health(port)
         yield
           val data = delivery.get("data").flatMap(_.asObject)
+          val feed = report.get("feeds").flatMap(_.asArray).flatMap(_.headOption).flatMap(_.asObject)
           assertTrue(
+            report.get("webhookSubscriptions").contains(Json.Num(1)),
+            feed.flatMap(_.get("feed")).contains(Json.Str(feedUrl.value)),
+            feed.flatMap(_.get("webhookSubscriptions")).contains(Json.Num(1)),
+            feed.flatMap(_.get("callbackUrl")).isEmpty,
             result.get("result").flatMap(_.asObject).flatMap(_.get("id")).isDefined,
             verification.get("type").contains(Json.Str("verification")),
             delivery.get("eventId").contains(Json.Str(ItemId("zio").eventId)),

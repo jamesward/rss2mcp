@@ -1,6 +1,6 @@
 package rss2mcp
 
-import com.jamesward.ziohttp.mcp.McpServer
+import com.jamesward.ziohttp.mcp.{McpServer, McpWebhookStore}
 import zio.*
 import zio.http.*
 
@@ -26,7 +26,7 @@ object Main extends ZIOAppDefault:
       _     <- ZIO.scoped(
                  for
                    server <- Rss2Mcp.server(PollInterval).mapError(e => IllegalStateException(e.toString))
-                   _      <- Server.serve[Feeds & McpServer.State](Rss2Mcp.routes(server))
+                   _      <- Server.serve[Feeds & McpWebhookStore & McpServer.State](Rss2Mcp.routes(server))
                  yield ()
                ).provide(
                  Server.defaultWithPort(port),

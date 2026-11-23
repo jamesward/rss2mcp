@@ -54,7 +54,9 @@ The MCP server is `sbta` (this build's `./sbta --mcp`), configured in `.kiro/set
 
 - Heroku app `rss2mcp`, served at `https://rss2mcp.jamesward.dev/`, one `web` dyno, with the buildpacks
   `heroku/jvm` and `https://github.com/jamesward/buildpack-scala`. Deploy with
-  `git push https://git.heroku.com/rss2mcp.git main`. Config vars: `LOG_LEVEL` (optional).
+  `git push https://git.heroku.com/rss2mcp.git main`. Config vars: `LOG_LEVEL` (optional). heroku-ops watches it
+  (log drain, webhook, a probe of `GET /health`, which reports each feed's subscriptions and fetches; README) and
+  fires the `rss2mcp maintenance` routine on an incident. Heroku Labs `log-runtime-metrics` is on.
 - Logs are one JSON object per line on stdout (`zio-logging` console JSON logger with the SLF4J bridge,
   `AppLogging`), with `request_id` from `X-Request-ID` on every entry made during a request. `LOG_LEVEL`
   sets the floor (`INFO` when unset; Java libraries stay at `INFO` or above). At `INFO` the logs show each
@@ -62,7 +64,6 @@ The MCP server is `sbta` (this build's `./sbta --mcp`), configured in `.kiro/set
   from zio-http-mcp, every events method and webhook POST. `DEBUG` adds every feed check, each HTTP hop of a
   fetch, and webhook watermarks. Request bodies, tokens and webhook secrets are never logged; a session id is
   logged as its first 8 characters.
-- Runtime metrics (`log-runtime-metrics`) are not on.
 
 ## Maintenance routine
 

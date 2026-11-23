@@ -70,8 +70,6 @@ object Rss2Mcp:
         LogAnnotation("accept", header("accept")),
       )(ZIO.logInfo("Request received")).as((request, ())))
 
-  /** `GET /health` for heroku-ops's probe: the MCP endpoint at `/` only takes POST. Not logged, as it comes every minute. */
-  val health: Routes[Any, Response] = Routes(Method.GET / "health" -> handler(Response.text("ok")))
-
-  def routes(server: McpServer[Feeds]): Routes[Feeds & McpServer.State, Response] =
-    health ++ (server.routes @@ requestHeaders @@ Middleware.requestLogging() @@ requestId)
+  /** The MCP endpoint, and `GET /health` (heroku-ops probes it every minute, so it isn't logged). */
+  def routes(server: McpServer[Feeds]): Routes[Feeds & McpWebhookStore & McpServer.State, Response] =
+    Health.routes ++ (server.routes @@ requestHeaders @@ Middleware.requestLogging() @@ requestId)

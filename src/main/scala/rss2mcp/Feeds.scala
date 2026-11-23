@@ -11,6 +11,9 @@ import java.net.{Inet6Address, InetAddress}
 trait Feeds:
   def items(url: FeedUrl): IO[FeedError, Chunk[FeedItem]]
 
+  /** How reading each feed asked for in the last hour has gone. */
+  def stats: UIO[Map[FeedUrl, FeedStats]] = ZIO.succeed(Map.empty)
+
 object Feeds:
   /**
    * An HTTP client that checks a feed's TLS certificate and host name against
@@ -67,8 +70,9 @@ object Feeds:
         client  <- ZIO.service[Client]
         scope   <- ZIO.scope
         failing <- Ref.make(Map.empty[FeedUrl, Failing])
+        counts  <- Ref.make(Map.empty[FeedUrl, FeedStats])
         fetch    = HttpFetch(client, config, guard)
-        cache  <- Cache.makeWith(config.capacity, Lookup(fetch.uninterrupted)):
+        cache  <- Cache.makeWith(config.capacity, Lookup(recorded(counts, fetch.uninterrupted))):
                     case Exit.Success(_) => config.ttl
                     // A failure is shared by the callers waiting for it, then not kept: the backoff decides
                     // when the feed is fetched again.
@@ -79,12 +83,21 @@ object Feeds:
         // interrupted request ends without an answer. Interrupting a caller only stops its own join.
         def items(url: FeedUrl): IO[FeedError, Chunk[FeedItem]] =
           Clock.instant.flatMap: now =>
+            counts.update(all => all.updated(url, all.getOrElse(url, FeedStats.empty).requested(now))) *>
             failing.get.map(_.get(url).filter(_.retryAt.isAfter(now))).flatMap:
               case Some(f) =>
                 ZIO.logAnnotate(LogAnnotation("feed", url.value), LogAnnotation("failures", f.failures.toString),
                   LogAnnotation("retry_at", f.retryAt.toString))(ZIO.logDebug("Feed backing off")) *> ZIO.fail(f.error)
               case None =>
                 cache.get(url).forkIn(scope).flatMap(_.join).tapBoth(failed(url, _), _ => failing.update(_ - url))
+
+        override def stats: UIO[Map[FeedUrl, FeedStats]] =
+          Clock.instant.flatMap: now =>
+            val since = now.minus(FeedStats.Forget)
+            counts.updateAndGet(_.filter((_, s) => s.lastRequestAt.exists(_.isAfter(since)))).zipWith(failing.get):
+              (all, backingOff) => all.map: (url, s) =>
+                url -> backingOff.get(url).fold(s)(f =>
+                  s.copy(consecutiveFailures = f.failures, backingOffUntil = Option.when(f.retryAt.isAfter(now))(f.retryAt)))
 
         // Callers that shared one failed fetch count it once: the first sets a retryAt in the future.
         private def failed(url: FeedUrl, error: FeedError): UIO[Unit] =
@@ -100,6 +113,18 @@ object Feeds:
               ZIO.foreachDiscard(recorded): f =>
                 ZIO.logAnnotate(LogAnnotation("feed", url.value), LogAnnotation("failures", f.failures.toString),
                   LogAnnotation("retry_at", f.retryAt.toString))(ZIO.logInfo("Feed backing off after a failed fetch"))
+
+  /** `fetch`, with each fetch's time and outcome kept in `counts`. */
+  private def recorded(counts: Ref[Map[FeedUrl, FeedStats]], fetch: FeedUrl => IO[FeedError, Chunk[FeedItem]])(
+    url: FeedUrl): IO[FeedError, Chunk[FeedItem]] =
+    for
+      started <- Clock.instant
+      timed   <- fetch(url).either.timed
+      (took, outcome) = timed
+      _       <- counts.update(all =>
+                   all.updated(url, all.getOrElse(url, FeedStats.empty).fetched(started, took.toMillis, outcome)))
+      items   <- ZIO.fromEither(outcome)
+    yield items
 
   private final case class HttpFetch(client: Client, config: Config, guard: HostGuard):
     /**

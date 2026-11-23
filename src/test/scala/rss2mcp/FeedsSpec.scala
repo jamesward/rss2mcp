@@ -98,6 +98,27 @@ object FeedsSpec extends ZIOSpecDefault:
         config.backoffAfter(100).toMillis == 900_000L,
       )
     ,
+    test("stats count each feed's requests, fetches and failures, and show a backoff"):
+      for
+        healthy <- Ref.make(true)
+        toggled  = Routes(Method.GET / "toggled.xml" -> handler(healthy.get.map: ok =>
+                     if ok then Response.text(Fixtures.rss) else Response.status(Status.ServiceUnavailable)))
+        config   = Feeds.Config(ttl = 1.milli, backoff = 1.minute)
+        stats   <- withFeeds(config, HostGuard.allowAll, toggled): (port, feeds) =>
+                     val target = url(port, "toggled.xml")
+                     for
+                       _     <- feeds.items(target)
+                       _     <- healthy.set(false).delay(10.millis)
+                       _     <- feeds.items(target).either
+                       _     <- feeds.items(target).either   // backing off: no fetch
+                       stats <- feeds.stats
+                     yield stats.get(target)
+      yield assertTrue(
+        stats.exists(s => s.requests == 3 && s.fetches == 2 && s.failures == 1 && s.consecutiveFailures == 1),
+        stats.exists(s => s.backingOffUntil.isDefined && s.items.contains(2) && s.lastError.isDefined),
+        stats.exists(s => s.lastSuccessAt.isDefined && s.lastFetchMs.isDefined && s.newestItemAt.isDefined),
+      )
+    ,
     test("a feed served with a certificate the JDK doesn't trust isn't read"):
       ZIO.scoped:
         for

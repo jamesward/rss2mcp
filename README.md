@@ -82,6 +82,8 @@ In the server's logs, Dot subscribes with the User-Agent `openai-mcp/1.0.0` and 
 ./sbta "~runReload"        # restarts on source changes
 ```
 
+`GET /health` always answers `200` with JSON: each feed read in the last hour (its URL without the query), its live webhook subscriptions, and how reading it has gone since the server started (requests, HTTP fetches, failures, failures in a row, a backoff in progress, the last fetch's time, duration and error, and the items it found). It shows no callback URLs or subscription arguments.
+
 Logs are JSON, one object per line. `LOG_LEVEL=DEBUG` adds every feed check and each HTTP hop of a feed fetch; [AGENTS.md](AGENTS.md) lists what is logged.
 
 See [AGENTS.md](AGENTS.md) for the build, tests and validation.
