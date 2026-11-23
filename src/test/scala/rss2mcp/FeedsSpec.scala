@@ -48,6 +48,21 @@ object FeedsSpec extends ZIOSpecDefault:
         count   <- fetches.get
       yield assertTrue(sizes._1.forall(_ == 2), sizes._2 == 2, count == 1)
     ,
+    test("a caller that gives up doesn't cancel a fetch another caller is waiting for"):
+      for
+        fetches <- Ref.make(0)
+        slow     = Routes(Method.GET / "slow.xml" -> handler(
+                     fetches.update(_ + 1).as(Response.text(Fixtures.rss)).delay(500.millis)))
+        size    <- withFeeds(Feeds.Config(), HostGuard.allowAll, slow): (port, feeds) =>
+                     for
+                       quitter <- feeds.items(url(port, "slow.xml")).fork
+                       waiter  <- feeds.items(url(port, "slow.xml")).fork.delay(50.millis)
+                       _       <- quitter.interrupt.delay(100.millis)
+                       items   <- waiter.join
+                     yield items.size
+        count   <- fetches.get
+      yield assertTrue(size == 2, count == 1)
+    ,
     test("a feed served with a certificate the JDK doesn't trust isn't read"):
       ZIO.scoped:
         for

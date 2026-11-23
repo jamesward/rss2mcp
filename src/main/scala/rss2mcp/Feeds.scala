@@ -15,17 +15,22 @@ object Feeds:
   /**
    * An HTTP client that checks a feed's TLS certificate and host name against
    * the JDK's trust store. zio-http's `Client.default` accepts any certificate,
-   * which would let anyone on the network path rewrite a feed.
+   * which would let anyone on the network path rewrite a feed. A connection
+   * attempt gives up after `ConnectTimeout`, well inside a fetch's `timeout`,
+   * so the client fails it rather than the fetch's timeout interrupting it.
    */
   val client: ZLayer[Any, Throwable, Client] =
-    (ZLayer.succeed(ZClient.Config.default.ssl(ClientSSLConfig.FromSystemTrustStore)) ++
+    (ZLayer.succeed(ZClient.Config.default.ssl(ClientSSLConfig.FromSystemTrustStore).connectionTimeout(ConnectTimeout)) ++
       ZLayer.succeed(NettyConfig.defaultWithFastShutdown) ++ DnsResolver.default) >>> Client.live
+
+  val ConnectTimeout: Duration = 10.seconds
 
   final case class Config(
     maxBytes: Long = 5L * 1024 * 1024,
     maxRedirects: Int = 5,
-    // Some busy feeds (hnrss.org) take several seconds to answer.
-    timeout: Duration = 30.seconds,
+    // Some busy feeds (hnrss.org) take several seconds to answer. Under Heroku's 30-second router
+    // timeout, so a subscribe to a feed that doesn't answer still gets its error back.
+    timeout: Duration = 20.seconds,
     /** How long a fetched feed is reused, so subscriptions to one feed share a fetch. */
     ttl: Duration = 1.minute,
     capacity: Int = 10_000,
@@ -33,17 +38,32 @@ object Feeds:
 
   /** Fetches feeds over HTTP, after `guard` allows each hop, and caches them for `config.ttl`. */
   def http(config: Config, guard: HostGuard): ZLayer[Client, Nothing, Feeds] =
-    ZLayer:
+    ZLayer.scoped:
       for
         client <- ZIO.service[Client]
+        scope  <- ZIO.scope
         fetch   = HttpFetch(client, config, guard)
-        cache  <- Cache.makeWith(config.capacity, Lookup(fetch.items)):
+        cache  <- Cache.makeWith(config.capacity, Lookup(fetch.uninterrupted)):
                     case Exit.Success(_) => config.ttl
                     case Exit.Failure(_) => 10.seconds
       yield new Feeds:
-        def items(url: FeedUrl): IO[FeedError, Chunk[FeedItem]] = cache.get(url)
+        // On a fiber of its own: when the caller that started a fetch is interrupted (a client that hangs
+        // up, a router's timeout), zio-cache interrupts every caller waiting for that fetch too, and an
+        // interrupted request ends without an answer. Interrupting a caller only stops its own join.
+        def items(url: FeedUrl): IO[FeedError, Chunk[FeedItem]] = cache.get(url).forkIn(scope).flatMap(_.join)
 
   private final case class HttpFetch(client: Client, config: Config, guard: HostGuard):
+    /**
+     * `items`, with an interruption from inside it (the HTTP client) as an
+     * `Unreachable`, so callers get an error rather than ending without an answer.
+     */
+    def uninterrupted(url: FeedUrl): IO[FeedError, Chunk[FeedItem]] =
+      items(url).catchAllCause: cause =>
+        if cause.isInterruptedOnly then
+          ZIO.logAnnotate(LogAnnotation("feed", url.value))(ZIO.logWarningCause("Feed fetch interrupted", cause)) *>
+            ZIO.fail(FeedError.Unreachable(url, "the fetch was interrupted"))
+        else ZIO.refailCause(cause)
+
     /** A cache miss: fetch and parse the feed, and log how it went. */
     def items(url: FeedUrl): IO[FeedError, Chunk[FeedItem]] =
       ZIO.logAnnotate(LogAnnotation("feed", url.value)):
