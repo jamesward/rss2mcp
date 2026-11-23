@@ -38,7 +38,7 @@ Once subscribed (a request with a cursor), every failure to read the feed is `-3
 
 ## Fetching
 
-Each feed is fetched at most once a minute, whatever its number of subscriptions, and only while it has one: a subscription that ends, or isn't refreshed, stops its checks. A fetch gives up after 20 seconds (10 to connect). A feed that fails isn't fetched again for 30 seconds, doubled for each failure in a row up to 15 minutes, and a fetch that succeeds starts over; meanwhile its checks and new subscriptions get the last error. Items published while a feed was failing are delivered by the first fetch that succeeds, as long as the feed still lists them. A webhook subscription whose callback endpoint doesn't echo the verification challenge is refused with `-32027` (`-32015` for ChatGPT).
+Each feed is fetched at most once a minute, whatever its number of subscriptions, and only while it has one: a subscription that ends, or isn't refreshed, stops its checks. A fetch gives up after 20 seconds (16 to connect), and keeps its connection open for 90 seconds, so a feed polled every minute reuses it rather than connecting again. A feed that fails isn't fetched again for 30 seconds, doubled for each failure in a row up to 15 minutes, and a fetch that succeeds starts over; meanwhile its checks and new subscriptions get the last error. Items published while a feed was failing are delivered by the first fetch that succeeds, as long as the feed still lists them. A webhook subscription whose callback endpoint doesn't echo the verification challenge is refused with `-32027` (`-32015` for ChatGPT).
 
 ## Using it from ChatGPT
 

@@ -15,15 +15,26 @@ object Feeds:
   /**
    * An HTTP client that checks a feed's TLS certificate and host name against
    * the JDK's trust store. zio-http's `Client.default` accepts any certificate,
-   * which would let anyone on the network path rewrite a feed. A connection
-   * attempt gives up after `ConnectTimeout`, well inside a fetch's `timeout`,
-   * so the client fails it rather than the fetch's timeout interrupting it.
+   * which would let anyone on the network path rewrite a feed.
+   *
+   * A connection stays open for `IdleTimeout` between fetches, longer than the
+   * one-minute poll, so a feed's next fetch reuses it rather than connecting
+   * again. A busy feed host can drop new connections (hnrss.org loses some of
+   * their SYNs, so a connect takes 1, 3 or 7 seconds, or fails); a reused one
+   * skips that. A new connection gives up after `ConnectTimeout`, inside a
+   * fetch's `timeout`, so the client fails it rather than the fetch's timeout
+   * interrupting it.
    */
   val client: ZLayer[Any, Throwable, Client] =
-    (ZLayer.succeed(ZClient.Config.default.ssl(ClientSSLConfig.FromSystemTrustStore).connectionTimeout(ConnectTimeout)) ++
+    (ZLayer.succeed(ZClient.Config.default.ssl(ClientSSLConfig.FromSystemTrustStore)
+      .connectionTimeout(ConnectTimeout).idleTimeout(IdleTimeout)) ++
       ZLayer.succeed(NettyConfig.defaultWithFastShutdown) ++ DnsResolver.default) >>> Client.live
 
-  val ConnectTimeout: Duration = 10.seconds
+  /** Covers a SYN retransmitted at 15 seconds (after 1, 2 and 4 seconds lost), and leaves room in a 20-second fetch. */
+  val ConnectTimeout: Duration = 16.seconds
+
+  /** Longer than `Main.PollInterval`, so a feed polled once a minute keeps its connection. zio-http's default is 50 s. */
+  val IdleTimeout: Duration = 90.seconds
 
   final case class Config(
     maxBytes: Long = 5L * 1024 * 1024,
