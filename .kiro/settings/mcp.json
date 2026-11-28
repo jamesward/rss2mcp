@@ -10,7 +10,13 @@
     },
     "heroku-ops": {
       "type": "http",
-      "url": "https://jw-heroku-ops-bd1ee276f8be.herokuapp.com/mcp"
+      "url": "https://jw-heroku-ops-bd1ee276f8be.herokuapp.com/mcp",
+      "timeout" : 1800000
+    },
+    "mcpjam": {
+      "type": "http",
+      "url": "https://mcp.mcpjam.com/mcp",
+      "disabled": true
     }
   }
 }
